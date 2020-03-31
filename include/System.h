@@ -51,9 +51,9 @@ class System
 public:
     // Input sensor
     enum eSensor{
-        MONOCULAR=0,
-        STEREO=1,
-        RGBD=2
+        MONOCULAR=0, //单目
+        STEREO=1,  //双目
+        RGBD=2	   //rgb d  深度相机
     };
 
 public:

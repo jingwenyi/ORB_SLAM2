@@ -34,9 +34,9 @@ using namespace std;
 namespace ORB_SLAM2
 {
 
-const int ORBmatcher::TH_HIGH = 100;
-const int ORBmatcher::TH_LOW = 50;
-const int ORBmatcher::HISTO_LENGTH = 30;
+const int ORBmatcher::TH_HIGH = 100;//最佳距离的阈值 高值是100个像素点
+const int ORBmatcher::TH_LOW = 50; //最佳距离的阈值 低值是50个像素点
+const int ORBmatcher::HISTO_LENGTH = 30;  //记录30组历史像素点相差距离
 
 ORBmatcher::ORBmatcher(float nnratio, bool checkOri): mfNNratio(nnratio), mbCheckOrientation(checkOri)
 {
@@ -158,23 +158,33 @@ bool ORBmatcher::CheckDistEpipolarLine(const cv::KeyPoint &kp1,const cv::KeyPoin
 
 int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPointMatches)
 {
+	//获取与关键帧相关的地图点
     const vector<MapPoint*> vpMapPointsKF = pKF->GetMapPointMatches();
 
+	//初始化当前帧的地图点，初始化为null
     vpMapPointMatches = vector<MapPoint*>(F.N,static_cast<MapPoint*>(NULL));
 
+	//获取关键帧的特征向量
     const DBoW2::FeatureVector &vFeatVecKF = pKF->mFeatVec;
 
     int nmatches=0;
 
+	//定义一个旋转历史的向量
     vector<int> rotHist[HISTO_LENGTH];
+	//为向量每维申请500个空间
     for(int i=0;i<HISTO_LENGTH;i++)
         rotHist[i].reserve(500);
     const float factor = 1.0f/HISTO_LENGTH;
 
+
     // We perform the matching over ORB that belong to the same vocabulary node (at a certain level)
+    //关键帧特征向量开始地址
     DBoW2::FeatureVector::const_iterator KFit = vFeatVecKF.begin();
+	//当前帧特征向量开始地址
     DBoW2::FeatureVector::const_iterator Fit = F.mFeatVec.begin();
+	//关键帧特征向量结束地址
     DBoW2::FeatureVector::const_iterator KFend = vFeatVecKF.end();
+	//当前帧特征向量结束地址
     DBoW2::FeatureVector::const_iterator Fend = F.mFeatVec.end();
 
     while(KFit != KFend && Fit != Fend)
@@ -402,9 +412,14 @@ int ORBmatcher::SearchByProjection(KeyFrame* pKF, cv::Mat Scw, const vector<MapP
     return nmatches;
 }
 
-int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f> &vbPrevMatched, vector<int> &vnMatches12, int windowSize)
+int ORBmatcher::SearchForInitialization(Frame &F1,  								//参考帧
+										   Frame &F2, 								//当前帧
+										   vector<cv::Point2f> &vbPrevMatched, 		//参考帧关键点的坐标
+										   vector<int> &vnMatches12, 				//需要匹配点的个数
+										   int windowSize)							//关键点的窗口大小
 {
     int nmatches=0;
+	//设置需要匹配点个数为参考帧的关键点个数
     vnMatches12 = vector<int>(F1.mvKeysUn.size(),-1);
 
     vector<int> rotHist[HISTO_LENGTH];
@@ -417,11 +432,13 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
 
     for(size_t i1=0, iend1=F1.mvKeysUn.size(); i1<iend1; i1++)
     {
+    	//顺序获取关键点
         cv::KeyPoint kp1 = F1.mvKeysUn[i1];
-        int level1 = kp1.octave;
+        int level1 = kp1.octave;// 提取该特征点的在金字塔那一层获取
         if(level1>0)
             continue;
 
+		//把参考帧的关键点放到当前帧中去进行匹配
         vector<size_t> vIndices2 = F2.GetFeaturesInArea(vbPrevMatched[i1].x,vbPrevMatched[i1].y, windowSize,level1,level1);
 
         if(vIndices2.empty())

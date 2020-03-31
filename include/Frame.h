@@ -34,6 +34,7 @@
 
 namespace ORB_SLAM2
 {
+//最大支持640x480图片
 #define FRAME_GRID_ROWS 48
 #define FRAME_GRID_COLS 64
 
@@ -109,7 +110,7 @@ public:
     double mTimeStamp;
 
     // Calibration matrix and OpenCV distortion parameters.
-    cv::Mat mK;
+    cv::Mat mK; //相机的内参矩阵
     static float fx;
     static float fy;
     static float cx;
