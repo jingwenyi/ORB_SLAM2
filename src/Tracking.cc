@@ -280,6 +280,7 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
     return mCurrentFrame.mTcw.clone();
 }
 
+//tracking 线程包含两部分，估计运动 和跟踪局部地图
 void Tracking::Track()
 {
     if(mState==NO_IMAGES_YET)
@@ -292,19 +293,24 @@ void Tracking::Track()
     // Get Map Mutex -> Map cannot be changed
     unique_lock<mutex> lock(mpMap->mMutexMapUpdate);
 
+	//初始化
     if(mState==NOT_INITIALIZED)
     {
         if(mSensor==System::STEREO || mSensor==System::RGBD)
             StereoInitialization();
-        else
+        else 
+			//找到初始帧，2个关键帧，关联的3D 地图点
+			//关键帧的关键点的描述子对应的视觉词袋
             MonocularInitialization();
 
+		//更新关键帧的绘制，在viewer中可见
         mpFrameDrawer->Update(this);
 
         if(mState!=OK)
             return;
     }
-    else
+	//跟踪
+    else  
     {
         // System is initialized. Track Frame.
         bool bOK;
@@ -314,14 +320,18 @@ void Tracking::Track()
         {
             // Local Mapping is activated. This is the normal behaviour, unless
             // you explicitly activate the "only tracking" mode.
-
+			//正常初始化成功
             if(mState==OK)
             {
                 // Local Mapping might have changed some MapPoints tracked in last frame
+                //检查并更新上一帧被替换的MapPpints
                 CheckReplacedInLastFrame();
 
+				//跟踪上一帧或者参考帧或者重定位
+				//mVelocity 不为空，就选择TrackWithMotionModel 模式
                 if(mVelocity.empty() || mCurrentFrame.mnId<mnLastRelocFrameId+2)
                 {
+                	//跟踪参考帧
                     bOK = TrackReferenceKeyFrame();
                 }
                 else
@@ -618,6 +628,7 @@ void Tracking::MonocularInitialization()
 		//当前帧与初始化帧作匹配
         // Find correspondences
         ORBmatcher matcher(0.9,true);
+		//在当前帧关键点中找到参考帧的关键点对应的关键点坐标，和匹配的个数
         int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
         // Check if there are enough correspondences
@@ -629,48 +640,73 @@ void Tracking::MonocularInitialization()
             return;
         }
 
+		//定义相机旋转矩阵
         cv::Mat Rcw; // Current Camera Rotation
+        //定义相机平移矩阵
         cv::Mat tcw; // Current Camera Translation
+        //匹配点的三角化向量
         vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
+		//利用匹配的关键点信息进行单应矩阵和基础矩阵的计算，
+		// 进而计算出相机位姿的旋转矩阵和平移矩阵
         if(mpInitializer->Initialize(mCurrentFrame, mvIniMatches, Rcw, tcw, mvIniP3D, vbTriangulated))
-        {
+        {	
+        	//删除无法三角化的匹配点
             for(size_t i=0, iend=mvIniMatches.size(); i<iend;i++)
             {
                 if(mvIniMatches[i]>=0 && !vbTriangulated[i])
                 {
+                	//把匹配对对应的描述子距离设为-1， 表示没有匹配成功
                     mvIniMatches[i]=-1;
+					//匹配点数量减1
                     nmatches--;
                 }
             }
 
             // Set Frame Poses
+            //把初始化的第一帧作为世界坐标系，
+            // 因此第一帧的变换矩阵为单位矩阵
+            //外参矩阵4x4 矩阵,其中R 是3x3, T 是 3x1
+            /*
+            		*    [ R    T]
+            		*    [ 0    1 ]
+            		*
+            		*/
             mInitialFrame.SetPose(cv::Mat::eye(4,4,CV_32F));
+			//用求出的旋转矩阵和平移矩阵填充外参矩阵
             cv::Mat Tcw = cv::Mat::eye(4,4,CV_32F);
             Rcw.copyTo(Tcw.rowRange(0,3).colRange(0,3));
             tcw.copyTo(Tcw.rowRange(0,3).col(3));
+			//设置当前帧的位姿
             mCurrentFrame.SetPose(Tcw);
 
+			//将三角化得到的3D 点包装成MapPoints 点，在地图中显示
             CreateInitialMapMonocular();
         }
     }
 }
 
+//单目地图初始化
 void Tracking::CreateInitialMapMonocular()
 {
     // Create KeyFrames
+    //用初始化帧创建一个关键帧对象
     KeyFrame* pKFini = new KeyFrame(mInitialFrame,mpMap,mpKeyFrameDB);
+	//用当前帧创建一个关键帧对象
     KeyFrame* pKFcur = new KeyFrame(mCurrentFrame,mpMap,mpKeyFrameDB);
 
-
+	//将初始化帧的描述子转换为视觉词袋
     pKFini->ComputeBoW();
+	//将当前帧的描述子转换为视觉词袋
     pKFcur->ComputeBoW();
 
     // Insert KFs in the map
+    //将关键帧插入到地图
     mpMap->AddKeyFrame(pKFini);
     mpMap->AddKeyFrame(pKFcur);
 
     // Create MapPoints and asscoiate to keyframes
+    //3D 点包装成map 点
     for(size_t i=0; i<mvIniMatches.size();i++)
     {
         if(mvIniMatches[i]<0)
@@ -679,35 +715,45 @@ void Tracking::CreateInitialMapMonocular()
         //Create MapPoint.
         cv::Mat worldPos(mvIniP3D[i]);
 
+		//用3D 点构造map 点
         MapPoint* pMP = new MapPoint(worldPos,pKFcur,mpMap);
 
+		//将map 点和特征点关联
         pKFini->AddMapPoint(pMP,i);
         pKFcur->AddMapPoint(pMP,mvIniMatches[i]);
 
+		//把map 点和关键帧关联
         pMP->AddObservation(pKFini,i);
         pMP->AddObservation(pKFcur,mvIniMatches[i]);
 
+		//从众多观测到改mappoint 特征点中挑选区分最高的描述子
         pMP->ComputeDistinctiveDescriptors();
+		//更新mappoint 平均观测方向和以及观测距离的范围
         pMP->UpdateNormalAndDepth();
 
         //Fill Current Frame structure
+        //把关键点和地图点关联
         mCurrentFrame.mvpMapPoints[mvIniMatches[i]] = pMP;
         mCurrentFrame.mvbOutlier[mvIniMatches[i]] = false;
 
         //Add to Map
+        //把地图点插入地图中
         mpMap->AddMapPoint(pMP);
     }
 
     // Update Connections
+    //更新关键帧间的连接关系
     pKFini->UpdateConnections();
     pKFcur->UpdateConnections();
 
     // Bundle Adjustment
     cout << "New Map created with " << mpMap->MapPointsInMap() << " points" << endl;
 
+	//BA 优化, 通过g2o 优化关键帧的位姿和地图点的坐标
     Optimizer::GlobalBundleAdjustemnt(mpMap,20);
 
     // Set median depth to 1
+    //将mappoint 中值深度归一化，并归一化两帧直接的变换
     float medianDepth = pKFini->ComputeSceneMedianDepth(2);
     float invMedianDepth = 1.0f/medianDepth;
 
@@ -720,10 +766,12 @@ void Tracking::CreateInitialMapMonocular()
 
     // Scale initial baseline
     cv::Mat Tc2w = pKFcur->GetPose();
+	//根据点云归一化比例缩放平移量
     Tc2w.col(3).rowRange(0,3) = Tc2w.col(3).rowRange(0,3)*invMedianDepth;
     pKFcur->SetPose(Tc2w);
 
     // Scale points
+    //把3D 点的尺度也归一化到1
     vector<MapPoint*> vpAllMapPoints = pKFini->GetMapPointMatches();
     for(size_t iMP=0; iMP<vpAllMapPoints.size(); iMP++)
     {
@@ -734,34 +782,47 @@ void Tracking::CreateInitialMapMonocular()
         }
     }
 
+	//在局部地图中添加该初始化关键帧
     mpLocalMapper->InsertKeyFrame(pKFini);
     mpLocalMapper->InsertKeyFrame(pKFcur);
 
+	//设置当前帧的位姿
     mCurrentFrame.SetPose(pKFcur->GetPose());
     mnLastKeyFrameId=mCurrentFrame.mnId;
     mpLastKeyFrame = pKFcur;
 
+	//局部地图记录关键帧
     mvpLocalKeyFrames.push_back(pKFcur);
     mvpLocalKeyFrames.push_back(pKFini);
+	//获得所有的地图点
     mvpLocalMapPoints=mpMap->GetAllMapPoints();
+	//把当前帧设置为tracking 对象的参考帧
     mpReferenceKF = pKFcur;
+	//设置当前帧的参考关键帧
     mCurrentFrame.mpReferenceKF = pKFcur;
 
+	//设置tracking 对象的最后一帧
     mLastFrame = Frame(mCurrentFrame);
 
+	//为viewer 对象设置局部地图点
     mpMap->SetReferenceMapPoints(mvpLocalMapPoints);
 
+	//为viewer 对象设置相机位置
     mpMapDrawer->SetCurrentCameraPose(pKFcur->GetPose());
 
+	//设置初始帧原
     mpMap->mvpKeyFrameOrigins.push_back(pKFini);
 
     mState=OK;
 }
 
+//检查上一帧中的mappoint 是否被替代
 void Tracking::CheckReplacedInLastFrame()
 {
+	//遍历上一帧所有地图点
     for(int i =0; i<mLastFrame.N; i++)
     {
+    	//获取地图点
         MapPoint* pMP = mLastFrame.mvpMapPoints[i];
 
         if(pMP)
@@ -769,43 +830,58 @@ void Tracking::CheckReplacedInLastFrame()
             MapPoint* pRep = pMP->GetReplaced();
             if(pRep)
             {
+            	//设置关键帧的地图点
                 mLastFrame.mvpMapPoints[i] = pRep;
             }
         }
     }
 }
 
-
+//跟踪参考关键帧
 bool Tracking::TrackReferenceKeyFrame()
 {
     // Compute Bag of Words vector
+    //计算当前帧的视觉词袋
     mCurrentFrame.ComputeBoW();
 
     // We perform first an ORB matching with the reference keyframe
     // If enough matches are found we setup a PnP solver
+    //初始化ORBmatcher 对象
     ORBmatcher matcher(0.7,true);
     vector<MapPoint*> vpMapPointMatches;
 
+	//当前帧和参考帧视觉词袋匹配
+	//返回匹配成功对数和匹配成功的地图点
     int nmatches = matcher.SearchByBoW(mpReferenceKF,mCurrentFrame,vpMapPointMatches);
 
+	//匹配成功的地图点少于15 个
     if(nmatches<15)
         return false;
 
+	//把匹配成功的地图点作为当前帧地图点
     mCurrentFrame.mvpMapPoints = vpMapPointMatches;
+	//将上一帧的位姿作为当前帧的位姿
     mCurrentFrame.SetPose(mLastFrame.mTcw);
 
+	//通过优化3D 到 2D 的重投影误差来获得位姿
     Optimizer::PoseOptimization(&mCurrentFrame);
 
     // Discard outliers
+    //删除优化后的外点
     int nmatchesMap = 0;
+	//遍历关键帧
     for(int i =0; i<mCurrentFrame.N; i++)
     {
+    	//如果该点有对应的地图点
         if(mCurrentFrame.mvpMapPoints[i])
         {
+        	//查看该地图点是否是外点
             if(mCurrentFrame.mvbOutlier[i])
             {
+            	//获取该地图点
                 MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
 
+				//删除地图点
                 mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
                 mCurrentFrame.mvbOutlier[i]=false;
                 pMP->mbTrackInView = false;
@@ -813,10 +889,12 @@ bool Tracking::TrackReferenceKeyFrame()
                 nmatches--;
             }
             else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+				//跟踪到的mapponit 点个数++
                 nmatchesMap++;
         }
     }
 
+	//跟踪到的地图点大于10 返回成功
     return nmatchesMap>=10;
 }
 

@@ -37,21 +37,29 @@
 namespace ORB_SLAM2
 {
 
-
+//全局集束调整
 void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
-{
+{ 
+	//获取所有关键帧
     vector<KeyFrame*> vpKFs = pMap->GetAllKeyFrames();
+	//获取所有地图点
     vector<MapPoint*> vpMP = pMap->GetAllMapPoints();
+	//BA 优化
     BundleAdjustment(vpKFs,vpMP,nIterations,pbStopFlag, nLoopKF, bRobust);
 }
 
-
-void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<MapPoint *> &vpMP,
-                                 int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
+//用g2o 优化了关键帧的位姿和地图点的坐标
+void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, 	//关键帧
+									const vector<MapPoint *> &vpMP,    	//地图点
+                                 	int nIterations, 					//迭代次数
+                                 	bool* pbStopFlag, 					//是否强制暂停
+                                 	const unsigned long nLoopKF, 		//loop  关键帧个数
+                                 	const bool bRobust)					//是否使用核函数
 {
     vector<bool> vbNotIncludedMP;
     vbNotIncludedMP.resize(vpMP.size());
 
+	//初始化g20 优化器
     g2o::SparseOptimizer optimizer;
     g2o::BlockSolver_6_3::LinearSolverType * linearSolver;
 
@@ -68,30 +76,37 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
     long unsigned int maxKFid = 0;
 
     // Set KeyFrame vertices
+    //向优化器添加顶点
     for(size_t i=0; i<vpKFs.size(); i++)
     {
+    	//获取一个关键帧
         KeyFrame* pKF = vpKFs[i];
         if(pKF->isBad())
             continue;
         g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
+		
         vSE3->setEstimate(Converter::toSE3Quat(pKF->GetPose()));
         vSE3->setId(pKF->mnId);
         vSE3->setFixed(pKF->mnId==0);
+		//向优化器添加关键帧位姿顶点
         optimizer.addVertex(vSE3);
         if(pKF->mnId>maxKFid)
             maxKFid=pKF->mnId;
     }
 
+	//设定阈值
     const float thHuber2D = sqrt(5.99);
     const float thHuber3D = sqrt(7.815);
 
     // Set MapPoint vertices
     for(size_t i=0; i<vpMP.size(); i++)
     {
+    	//获取每一个地图点
         MapPoint* pMP = vpMP[i];
         if(pMP->isBad())
             continue;
         g2o::VertexSBAPointXYZ* vPoint = new g2o::VertexSBAPointXYZ();
+		//向优化器添加mappoint 顶点
         vPoint->setEstimate(Converter::toVector3d(pMP->GetWorldPos()));
         const int id = pMP->mnId+maxKFid+1;
         vPoint->setId(id);
@@ -102,26 +117,32 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
 
         int nEdges = 0;
         //SET EDGES
+        //向优化器添加投影边
         for(map<KeyFrame*,size_t>::const_iterator mit=observations.begin(); mit!=observations.end(); mit++)
         {
 
             KeyFrame* pKF = mit->first;
             if(pKF->isBad() || pKF->mnId>maxKFid)
                 continue;
-
+			//统计与地图点关联的关键帧
             nEdges++;
 
+			//获取关键帧关键点坐标
             const cv::KeyPoint &kpUn = pKF->mvKeysUn[mit->second];
-
+			//单目和rgbd相机
             if(pKF->mvuRight[mit->second]<0)
             {
                 Eigen::Matrix<double,2,1> obs;
+				//把mappoint 对应的 关键点坐标赋值给obs
                 obs << kpUn.pt.x, kpUn.pt.y;
 
                 g2o::EdgeSE3ProjectXYZ* e = new g2o::EdgeSE3ProjectXYZ();
 
+				//给集合添加map 点id
                 e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(id)));
+				//给集合添加对应的关键帧
                 e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pKF->mnId)));
+				//
                 e->setMeasurement(obs);
                 const float &invSigma2 = pKF->mvInvLevelSigma2[kpUn.octave];
                 e->setInformation(Eigen::Matrix2d::Identity()*invSigma2);
@@ -133,6 +154,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                     rk->setDelta(thHuber2D);
                 }
 
+				//添加相机内参
                 e->fx = pKF->fx;
                 e->fy = pKF->fy;
                 e->cx = pKF->cx;
@@ -140,7 +162,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
 
                 optimizer.addEdge(e);
             }
-            else
+            else //双目相机
             {
                 Eigen::Matrix<double,3,1> obs;
                 const float kp_ur = pKF->mvuRight[mit->second];
@@ -184,11 +206,13 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
     }
 
     // Optimize!
+    //开始优化
     optimizer.initializeOptimization();
     optimizer.optimize(nIterations);
 
     // Recover optimized data
 
+	//得到优化结构
     //Keyframes
     for(size_t i=0; i<vpKFs.size(); i++)
     {
@@ -197,6 +221,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
             continue;
         g2o::VertexSE3Expmap* vSE3 = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(pKF->mnId));
         g2o::SE3Quat SE3quat = vSE3->estimate();
+		//获取优化的关键帧位姿
         if(nLoopKF==0)
         {
             pKF->SetPose(Converter::toCvMat(SE3quat));
@@ -221,6 +246,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
             continue;
         g2o::VertexSBAPointXYZ* vPoint = static_cast<g2o::VertexSBAPointXYZ*>(optimizer.vertex(pMP->mnId+maxKFid+1));
 
+		//获取优化后的地图点坐标
         if(nLoopKF==0)
         {
             pMP->SetWorldPos(Converter::toCvMat(vPoint->estimate()));

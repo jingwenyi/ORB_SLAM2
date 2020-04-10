@@ -32,11 +32,14 @@ Map::Map():mnMaxKFid(0),mnBigChangeIdx(0)
 void Map::AddKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexMap);
+	//把关键帧插入到集合中
     mspKeyFrames.insert(pKF);
+	//设置集合最大id
     if(pKF->mnId>mnMaxKFid)
         mnMaxKFid=pKF->mnId;
 }
 
+//把地图点插入地图中
 void Map::AddMapPoint(MapPoint *pMP)
 {
     unique_lock<mutex> lock(mMutexMap);

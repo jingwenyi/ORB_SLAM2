@@ -35,136 +35,162 @@ Initializer::Initializer(const Frame &ReferenceFrame, float sigma, int iteration
 	//保存摄像机的内参矩阵
     mK = ReferenceFrame.mK.clone();
 
+	//保存初始化帧的关键点
     mvKeys1 = ReferenceFrame.mvKeysUn;
 
     mSigma = sigma;
     mSigma2 = sigma*sigma;
+	//8点法计算是迭代的次数200
     mMaxIterations = iterations;
 }
 
-bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatches12, cv::Mat &R21, cv::Mat &t21,
-                             vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated)
+bool Initializer::Initialize(const Frame &CurrentFrame, 		//当前帧
+							const vector<int> &vMatches12, 	//初始化帧关键点和当前帧关键点的关联向量
+							cv::Mat &R21, 					//旋转矩阵
+							cv::Mat &t21,					//平移矩阵
+                            vector<cv::Point3f> &vP3D, 		//计算出的3D 点坐标
+                            vector<bool> &vbTriangulated)   //匹配点是否进行了三角化向量
 {
     // Fill structures with current keypoints and matches with reference frame
     // Reference Frame: 1, Current Frame: 2
+    //获取当前帧的关键点
     mvKeys2 = CurrentFrame.mvKeysUn;
-
+	//把mvMatches12  size 置0
     mvMatches12.clear();
+	//为mvMatches12 预留空间，设置capacity 最大容量为当前帧关键点的个数
     mvMatches12.reserve(mvKeys2.size());
+	//修改capacity = size = mvKeys1.size()
     mvbMatched1.resize(mvKeys1.size());
+	//遍历匹配到的关键点索引
     for(size_t i=0, iend=vMatches12.size();i<iend; i++)
     {
+    	// > 0 表示当前关键点有匹配的对象
         if(vMatches12[i]>=0)
         {
+        	//把初始化帧的关键点和匹配到的当前帧push 到mvMatches12 向量中
             mvMatches12.push_back(make_pair(i,vMatches12[i]));
+			//对应的关键点匹配位设置true
             mvbMatched1[i]=true;
         }
         else
             mvbMatched1[i]=false;
     }
-
+	//获取匹配到关键点的个数
     const int N = mvMatches12.size();
 
     // Indices for minimum set selection
     vector<size_t> vAllIndices;
     vAllIndices.reserve(N);
     vector<size_t> vAvailableIndices;
-
+	//给变量push N 个值，供生产随机数使用
     for(int i=0; i<N; i++)
     {
         vAllIndices.push_back(i);
     }
-
     // Generate sets of 8 points for each RANSAC iteration
+    //用8点法来求基础矩阵 mvSets[mMaxIterations][8]
     mvSets = vector< vector<size_t> >(mMaxIterations,vector<size_t>(8,0));
-
+	//设置产生随机数的种子
     DUtils::Random::SeedRandOnce(0);
 
+	//遍历200次，每次都随机去8个点对
     for(int it=0; it<mMaxIterations; it++)
-    {
+    {	
         vAvailableIndices = vAllIndices;
 
         // Select a minimum set
         for(size_t j=0; j<8; j++)
         {
+        	//生产一个随机数
             int randi = DUtils::Random::RandomInt(0,vAvailableIndices.size()-1);
+			//获取生产随机数vAvailableIndices 中的值
             int idx = vAvailableIndices[randi];
-
+			//把取到的匹配关键点的索引保存到集合
             mvSets[it][j] = idx;
 
+			//提出点已经产生的随机数对应的数
             vAvailableIndices[randi] = vAvailableIndices.back();
             vAvailableIndices.pop_back();
         }
     }
-
+	//通常会同时估计基础矩阵F 和单应矩阵H, 
+	//选择重投影误差比较小的那个作为最终的运动估计矩阵
     // Launch threads to compute in parallel a fundamental matrix and a homography
     vector<bool> vbMatchesInliersH, vbMatchesInliersF;
+	//统计得分变量
     float SH, SF;
+	//声明单应矩阵变量和基础矩阵变量
     cv::Mat H, F;
-
+	//开启线程计算单应性矩阵
     thread threadH(&Initializer::FindHomography,this,ref(vbMatchesInliersH), ref(SH), ref(H));
+	//开启线程计算基础矩阵
     thread threadF(&Initializer::FindFundamental,this,ref(vbMatchesInliersF), ref(SF), ref(F));
 
     // Wait until both threads have finished
     threadH.join();
     threadF.join();
-
     // Compute ratio of scores
+    //计算模型得分比例
     float RH = SH/(SH+SF);
-
     // Try to reconstruct from homography or fundamental depending on the ratio (0.40-0.45)
+    //单应矩阵分值的比例超过0.40则用单应矩阵来恢复运动，
+    // 这里计算出来的旋转向量结果存放在R21中,平移向量存放在t21中
     if(RH>0.40)
+		//单应矩阵恢复运动
         return ReconstructH(vbMatchesInliersH,H,mK,R21,t21,vP3D,vbTriangulated,1.0,50);
     else //if(pF_HF>0.6)
+    	//基础矩阵恢复运动
         return ReconstructF(vbMatchesInliersF,F,mK,R21,t21,vP3D,vbTriangulated,1.0,50);
-
     return false;
 }
 
 
 void Initializer::FindHomography(vector<bool> &vbMatchesInliers, float &score, cv::Mat &H21)
-{
-    // Number of putative matches
+{   //求出匹配成功点的对数
     const int N = mvMatches12.size();
-
-    // Normalize coordinates
     vector<cv::Point2f> vPn1, vPn2;
     cv::Mat T1, T2;
+	//对初始化帧的关键点做归一化， 归一化的坐标保存在vpn1 中
     Normalize(mvKeys1,vPn1, T1);
+	//对当前帧的关键点做归一化，归一化的坐标保存在vpn2 中
     Normalize(mvKeys2,vPn2, T2);
+	//矩阵求逆
     cv::Mat T2inv = T2.inv();
-
-    // Best Results variables
+    //初始化得分
     score = 0.0;
     vbMatchesInliers = vector<bool>(N,false);
-
     // Iteration variables
     vector<cv::Point2f> vPn1i(8);
     vector<cv::Point2f> vPn2i(8);
     cv::Mat H21i, H12i;
     vector<bool> vbCurrentInliers(N,false);
     float currentScore;
-
     // Perform all RANSAC iterations and save the solution with highest score
+    //遍历生产的随机点集， mMaxIterations = 200 * 8
     for(int it=0; it<mMaxIterations; it++)
     {
         // Select a minimum set
         for(size_t j=0; j<8; j++)
         {
+        	//取出点集中匹配对的索引
             int idx = mvSets[it][j];
-
+			//取出对应的初始化帧的归一化坐标
             vPn1i[j] = vPn1[mvMatches12[idx].first];
+			//取出对应的当前帧的归一化坐标
             vPn2i[j] = vPn2[mvMatches12[idx].second];
         }
-
+		//用8点法，计算单应矩阵
         cv::Mat Hn = ComputeH21(vPn1i,vPn2i);
+		//解除归一化
         H21i = T2inv*Hn*T1;
+		//求出1-->2 的 单应矩阵
         H12i = H21i.inv();
-
+		//通过单应矩阵投影关键点到对应的图像上， 
+		// 求匹配关键点的距离, 统计分数
+		//利用重投影误差进行评分
         currentScore = CheckHomography(H21i, H12i, vbCurrentInliers, mSigma);
-
-        if(currentScore>score)
-        {
+		//获取一个得分最高的单应矩阵
+        if(currentScore>score){
             H21 = H21i.clone();
             vbMatchesInliers = vbCurrentInliers;
             score = currentScore;
@@ -176,11 +202,12 @@ void Initializer::FindHomography(vector<bool> &vbMatchesInliers, float &score, c
 void Initializer::FindFundamental(vector<bool> &vbMatchesInliers, float &score, cv::Mat &F21)
 {
     // Number of putative matches
-    const int N = vbMatchesInliers.size();
-
+    //vbMatchesInliers 还没有初始化，size =0 ?
+    const int N = vbMatchesInliers.size();  //mvMatches12.size();
     // Normalize coordinates
     vector<cv::Point2f> vPn1, vPn2;
     cv::Mat T1, T2;
+	//对初始化帧和当前帧关键点的归一化
     Normalize(mvKeys1,vPn1, T1);
     Normalize(mvKeys2,vPn2, T2);
     cv::Mat T2t = T2.t();
@@ -188,32 +215,33 @@ void Initializer::FindFundamental(vector<bool> &vbMatchesInliers, float &score, 
     // Best Results variables
     score = 0.0;
     vbMatchesInliers = vector<bool>(N,false);
-
     // Iteration variables
     vector<cv::Point2f> vPn1i(8);
     vector<cv::Point2f> vPn2i(8);
     cv::Mat F21i;
     vector<bool> vbCurrentInliers(N,false);
     float currentScore;
-
     // Perform all RANSAC iterations and save the solution with highest score
+    //遍历生产的随机点集， mMaxIterations = 200 * 8
     for(int it=0; it<mMaxIterations; it++)
     {
         // Select a minimum set
         for(int j=0; j<8; j++)
         {
+        	//取出点集中匹配对的索引
             int idx = mvSets[it][j];
-
+			//取出对应的初始化帧的归一化坐标
             vPn1i[j] = vPn1[mvMatches12[idx].first];
+			//取出对应的当前帧的归一化坐标
             vPn2i[j] = vPn2[mvMatches12[idx].second];
         }
-
+		//用8 点法计算基础矩阵
         cv::Mat Fn = ComputeF21(vPn1i,vPn2i);
-
+		//解除归一化
         F21i = T2t*Fn*T1;
-
+		//利用重投影误差进行评分
         currentScore = CheckFundamental(F21i, vbCurrentInliers, mSigma);
-
+		//获取一个得分最高的基础矩阵
         if(currentScore>score)
         {
             F21 = F21i.clone();
@@ -223,13 +251,15 @@ void Initializer::FindFundamental(vector<bool> &vbMatchesInliers, float &score, 
     }
 }
 
-
+//用8 点法计算单应矩阵
 cv::Mat Initializer::ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2)
 {
+	//获取点的个数8
     const int N = vP1.size();
-
+	//A  为16 X 9 的矩阵
     cv::Mat A(2*N,9,CV_32F);
-
+	//AH = 0
+	//遍历8 对点，填充A 矩阵
     for(int i=0; i<N; i++)
     {
         const float u1 = vP1[i].x;
@@ -261,17 +291,23 @@ cv::Mat Initializer::ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv:
 
     cv::Mat u,w,vt;
 
+	//进行svd 分解，直接调用了opencv 的函数
     cv::SVDecomp(A,w,u,vt,cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
+	//转换成3x3 的矩阵
     return vt.row(8).reshape(0, 3);
 }
 
+
+
 cv::Mat Initializer::ComputeF21(const vector<cv::Point2f> &vP1,const vector<cv::Point2f> &vP2)
 {
+	//获得点的个数
     const int N = vP1.size();
-
+	//A 8x9 的矩阵
     cv::Mat A(N,9,CV_32F);
-
+	//AF = 0
+	//遍历8对点，填充A 矩阵
     for(int i=0; i<N; i++)
     {
         const float u1 = vP1[i].x;
@@ -292,21 +328,30 @@ cv::Mat Initializer::ComputeF21(const vector<cv::Point2f> &vP1,const vector<cv::
 
     cv::Mat u,w,vt;
 
+	//进行svd 分解
     cv::SVDecomp(A,w,u,vt,cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
+	//转换成3x3的矩阵,求出F 矩阵
     cv::Mat Fpre = vt.row(8).reshape(0, 3);
 
+	//F 矩阵的奇异性约束
     cv::SVDecomp(Fpre,w,u,vt,cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
     w.at<float>(2)=0;
-
+	//F '= U*diag(r,s,0)*vt
     return  u*cv::Mat::diag(w)*vt;
 }
 
-float Initializer::CheckHomography(const cv::Mat &H21, const cv::Mat &H12, vector<bool> &vbMatchesInliers, float sigma)
+//用单应矩阵求匹配到的关键点在对应图像上的坐标，求距离误差，统计得分
+float Initializer::CheckHomography(const cv::Mat &H21, 				//单应矩阵， 2-->1
+									const cv::Mat &H12, 			//单应矩阵，1-->2
+									vector<bool> &vbMatchesInliers, //检查结果
+									float sigma)					//比例因子
 {   
+	//获取匹配点数量
     const int N = mvMatches12.size();
 
+	//取出单应矩阵每一个值
     const float h11 = H21.at<float>(0,0);
     const float h12 = H21.at<float>(0,1);
     const float h13 = H21.at<float>(0,2);
@@ -317,6 +362,7 @@ float Initializer::CheckHomography(const cv::Mat &H21, const cv::Mat &H12, vecto
     const float h32 = H21.at<float>(2,1);
     const float h33 = H21.at<float>(2,2);
 
+	//取出单应矩阵逆矩阵每一个值
     const float h11inv = H12.at<float>(0,0);
     const float h12inv = H12.at<float>(0,1);
     const float h13inv = H12.at<float>(0,2);
@@ -327,21 +373,25 @@ float Initializer::CheckHomography(const cv::Mat &H21, const cv::Mat &H12, vecto
     const float h32inv = H12.at<float>(2,1);
     const float h33inv = H12.at<float>(2,2);
 
+	//扩充匹配结构标志位
     vbMatchesInliers.resize(N);
 
     float score = 0;
-
+	//设置阈值
     const float th = 5.991;
 
-    const float invSigmaSquare = 1.0/(sigma*sigma);
+	//sigma = 1.0
+    const float invSigmaSquare = 1.0/(sigma*sigma); // =1
 
     for(int i=0; i<N; i++)
     {
         bool bIn = true;
 
+		//获取匹配点
         const cv::KeyPoint &kp1 = mvKeys1[mvMatches12[i].first];
         const cv::KeyPoint &kp2 = mvKeys2[mvMatches12[i].second];
 
+		//获取匹配点关键点的坐标
         const float u1 = kp1.pt.x;
         const float v1 = kp1.pt.y;
         const float u2 = kp2.pt.x;
@@ -350,48 +400,57 @@ float Initializer::CheckHomography(const cv::Mat &H21, const cv::Mat &H12, vecto
         // Reprojection error in first image
         // x2in1 = H12*x2
 
+		//通过单应矩阵求出第二幅图像的关键点在
+		// 第一幅图像上对应的关键点坐标
         const float w2in1inv = 1.0/(h31inv*u2+h32inv*v2+h33inv);
         const float u2in1 = (h11inv*u2+h12inv*v2+h13inv)*w2in1inv;
         const float v2in1 = (h21inv*u2+h22inv*v2+h23inv)*w2in1inv;
 
+		//求第一幅图像上关键点和求出的关键点的位置的平方距离
         const float squareDist1 = (u1-u2in1)*(u1-u2in1)+(v1-v2in1)*(v1-v2in1);
 
         const float chiSquare1 = squareDist1*invSigmaSquare;
-
+		//如果计算的距离平方大于阈值，就算失败
         if(chiSquare1>th)
             bIn = false;
-        else
+        else//累计得分
             score += th - chiSquare1;
 
         // Reprojection error in second image
         // x1in2 = H21*x1
-
+		//通过单应矩阵求出第一幅图像的关键点在
+		//第二幅图像上对应的关键点坐标
         const float w1in2inv = 1.0/(h31*u1+h32*v1+h33);
         const float u1in2 = (h11*u1+h12*v1+h13)*w1in2inv;
         const float v1in2 = (h21*u1+h22*v1+h23)*w1in2inv;
 
+		//就散距离的平方
         const float squareDist2 = (u2-u1in2)*(u2-u1in2)+(v2-v1in2)*(v2-v1in2);
 
         const float chiSquare2 = squareDist2*invSigmaSquare;
 
+		//如果大于阈值，就算失败
         if(chiSquare2>th)
             bIn = false;
         else
             score += th - chiSquare2;
-
+		//更新匹配标志
         if(bIn)
             vbMatchesInliers[i]=true;
         else
             vbMatchesInliers[i]=false;
     }
 
+	//返回最后的得分
     return score;
 }
 
 float Initializer::CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesInliers, float sigma)
 {
+	//获取匹配点的个数
     const int N = mvMatches12.size();
 
+	//取出基础矩阵F 的元素
     const float f11 = F21.at<float>(0,0);
     const float f12 = F21.at<float>(0,1);
     const float f13 = F21.at<float>(0,2);
@@ -406,18 +465,20 @@ float Initializer::CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesI
 
     float score = 0;
 
+	//设定阈值
     const float th = 3.841;
     const float thScore = 5.991;
-
-    const float invSigmaSquare = 1.0/(sigma*sigma);
+	//sigma = 1
+    const float invSigmaSquare = 1.0/(sigma*sigma); // = 1
 
     for(int i=0; i<N; i++)
     {
         bool bIn = true;
-
+		//获取匹配的关键点
         const cv::KeyPoint &kp1 = mvKeys1[mvMatches12[i].first];
         const cv::KeyPoint &kp2 = mvKeys2[mvMatches12[i].second];
 
+		//获取关键点的坐标
         const float u1 = kp1.pt.x;
         const float v1 = kp1.pt.y;
         const float u2 = kp2.pt.x;
@@ -425,40 +486,44 @@ float Initializer::CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesI
 
         // Reprojection error in second image
         // l2=F21x1=(a2,b2,c2)
-
+        //Fx = x'
+		//通过基础矩阵和第一张图像上的关键点，
+		//求出第二张图像上的关键点
         const float a2 = f11*u1+f12*v1+f13;
         const float b2 = f21*u1+f22*v1+f23;
         const float c2 = f31*u1+f32*v1+f33;
-
-        const float num2 = a2*u2+b2*v2+c2;
-
+		//求两个向量的余弦距离的平方
+        const float num2 = a2*u2+b2*v2+c2; //这个地方应该不加c2 ?
+		//squareDist1 = (u2*u2 + v2*v2)*cosa*cosa
         const float squareDist1 = num2*num2/(a2*a2+b2*b2);
 
         const float chiSquare1 = squareDist1*invSigmaSquare;
-
+		//跟阈值做比较，大于阈值就失败
         if(chiSquare1>th)
             bIn = false;
-        else
+        else//累计积分
             score += thScore - chiSquare1;
 
         // Reprojection error in second image
         // l1 =x2tF21=(a1,b1,c1)
-
+		//通过基础矩阵和第二张图像上的关键点，
+		//求出第一张图像上的关键点
         const float a1 = f11*u2+f21*v2+f31;
         const float b1 = f12*u2+f22*v2+f32;
         const float c1 = f13*u2+f23*v2+f33;
 
+		//求余弦距离
         const float num1 = a1*u1+b1*v1+c1;
 
         const float squareDist2 = num1*num1/(a1*a1+b1*b1);
 
         const float chiSquare2 = squareDist2*invSigmaSquare;
-
+		//跟阈值进行比较
         if(chiSquare2>th)
             bIn = false;
-        else
+        else//累计得分
             score += thScore - chiSquare2;
-
+		//记录匹配结果
         if(bIn)
             vbMatchesInliers[i]=true;
         else
@@ -570,9 +635,18 @@ bool Initializer::ReconstructF(vector<bool> &vbMatchesInliers, cv::Mat &F21, cv:
     return false;
 }
 
-bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv::Mat &K,
-                      cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
+//对单应矩阵进行分解求r 和t
+bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, 	//传入单应矩阵匹配点标志位
+									cv::Mat &H21, 				   	//传入单应矩阵
+									cv::Mat &K,					  	//传入相机内参
+                      				cv::Mat &R21, 				  	//要求的相机旋转矩阵
+                      				cv::Mat &t21, 					//要求的相机平移矩阵
+                      				vector<cv::Point3f> &vP3D, 		//运动恢复计算出的3D 坐标
+                      				vector<bool> &vbTriangulated, 	//匹配点是否进行三角化
+                      				float minParallax, 				//最小视差
+                      				int minTriangulated)			//三角化阈值
 {
+	//计算单应矩阵匹配成功的点
     int N=0;
     for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
         if(vbMatchesInliers[i])
@@ -582,6 +656,7 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
     // Motion and structure from motion in a piecewise planar environment.
     // International Journal of Pattern Recognition and Artificial Intelligence, 1988
 
+	//求内参矩阵的逆矩阵
     cv::Mat invK = K.inv();
     cv::Mat A = invK*H21*K;
 
@@ -696,6 +771,7 @@ bool Initializer::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv:
 
     // Instead of applying the visibility constraints proposed in the Faugeras' paper (which could fail for points seen with low parallax)
     // We reconstruct all hypotheses and check in terms of triangulated points and parallax
+    //通过恢复3D 点来判断是否在相机正前方来确定最优解
     for(size_t i=0; i<8; i++)
     {
         float parallaxi;
@@ -747,48 +823,54 @@ void Initializer::Triangulate(const cv::KeyPoint &kp1, const cv::KeyPoint &kp2, 
     x3D = x3D.rowRange(0,3)/x3D.at<float>(3);
 }
 
+//归一化
 void Initializer::Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, cv::Mat &T)
-{
+{	//x 的平均值
     float meanX = 0;
+	//y的平均值
     float meanY = 0;
+	//获取关键点的个数
     const int N = vKeys.size();
-
+	//设置capacity = size = N
     vNormalizedPoints.resize(N);
-
     for(int i=0; i<N; i++)
     {
+    	//求所有关键点x 坐标的和
         meanX += vKeys[i].pt.x;
+		//求所有关键点y 坐标的和
         meanY += vKeys[i].pt.y;
     }
-
+	//求x 坐标的平均数
     meanX = meanX/N;
+	//求y 坐标的平均数
     meanY = meanY/N;
-
     float meanDevX = 0;
     float meanDevY = 0;
-
     for(int i=0; i<N; i++)
     {
+    	//用关键点的坐标-平均坐标得到新的坐标
         vNormalizedPoints[i].x = vKeys[i].pt.x - meanX;
         vNormalizedPoints[i].y = vKeys[i].pt.y - meanY;
-
+		//求新坐标x 坐标绝对值的和
         meanDevX += fabs(vNormalizedPoints[i].x);
+		//求新坐标y 坐标绝对值的和
         meanDevY += fabs(vNormalizedPoints[i].y);
     }
-
+	//求新坐标x 坐标的平均值
     meanDevX = meanDevX/N;
+	//求新坐标y 坐标的平均值
     meanDevY = meanDevY/N;
-
+	//对新坐标归一化比例
     float sX = 1.0/meanDevX;
     float sY = 1.0/meanDevY;
-
-    for(int i=0; i<N; i++)
-    {
+	//对所有新坐标作归一化处理
+    for(int i=0; i<N; i++){
         vNormalizedPoints[i].x = vNormalizedPoints[i].x * sX;
         vNormalizedPoints[i].y = vNormalizedPoints[i].y * sY;
     }
-
+	//为T 赋值3x3 的单位矩阵
     T = cv::Mat::eye(3,3,CV_32F);
+	//赋值归一化比例
     T.at<float>(0,0) = sX;
     T.at<float>(1,1) = sY;
     T.at<float>(0,2) = -meanX*sX;

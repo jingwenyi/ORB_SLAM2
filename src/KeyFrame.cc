@@ -286,6 +286,7 @@ MapPoint* KeyFrame::GetMapPoint(const size_t &idx)
     return mvpMapPoints[idx];
 }
 
+//更新图的连接
 void KeyFrame::UpdateConnections()
 {
     map<KeyFrame*,int> KFcounter;
@@ -294,27 +295,34 @@ void KeyFrame::UpdateConnections()
 
     {
         unique_lock<mutex> lockMPs(mMutexFeatures);
+		//获取该 关键帧关键点关联的地图点
         vpMP = mvpMapPoints;
     }
 
     //For all map points in keyframe check in which other keyframes are they seen
     //Increase counter for those keyframes
+    //遍历所有的地图点
     for(vector<MapPoint*>::iterator vit=vpMP.begin(), vend=vpMP.end(); vit!=vend; vit++)
     {
-        MapPoint* pMP = *vit;
+        MapPoint* pMP = *vit; //获取地图点
 
-        if(!pMP)
+        if(!pMP)//地图点不存在
             continue;
 
+		//无效地图点
         if(pMP->isBad())
             continue;
 
+		//获取观测到该地图点的所有关键帧
         map<KeyFrame*,size_t> observations = pMP->GetObservations();
 
+		//
         for(map<KeyFrame*,size_t>::iterator mit=observations.begin(), mend=observations.end(); mit!=mend; mit++)
         {
+        	//除去自身，自己跟自己不算共视
             if(mit->first->mnId==mnId)
                 continue;
+			//统计每一个关键整关联的地图点个数
             KFcounter[mit->first]++;
         }
     }
@@ -327,33 +335,42 @@ void KeyFrame::UpdateConnections()
     //In case no keyframe counter is over threshold add the one with maximum counter
     int nmax=0;
     KeyFrame* pKFmax=NULL;
-    int th = 15;
+    int th = 15; //阈值
 
     vector<pair<int,KeyFrame*> > vPairs;
     vPairs.reserve(KFcounter.size());
+	//遍历每个关键帧观察的的地图点个数向量
     for(map<KeyFrame*,int>::iterator mit=KFcounter.begin(), mend=KFcounter.end(); mit!=mend; mit++)
     {
         if(mit->second>nmax)
         {
             nmax=mit->second;
+			//找到对应权重最大的关键帧
             pKFmax=mit->first;
         }
+		//对应权重大于阈值
         if(mit->second>=th)
         {
+        	//对关键帧和权重进行连接
             vPairs.push_back(make_pair(mit->second,mit->first));
+			//更新其它关键帧和当前帧的连接权重
             (mit->first)->AddConnection(this,mit->second);
         }
     }
 
+	//如果没有超过权重，则对权重最大的关键帧进行连接
     if(vPairs.empty())
     {
         vPairs.push_back(make_pair(nmax,pKFmax));
         pKFmax->AddConnection(this,nmax);
     }
 
+	//对求的关键整和其对应的权重进行排序
+	//由大到小排序
     sort(vPairs.begin(),vPairs.end());
     list<KeyFrame*> lKFs;
     list<int> lWs;
+	//把权重和对于的帧分别插入列表
     for(size_t i=0; i<vPairs.size();i++)
     {
         lKFs.push_front(vPairs[i].second);
@@ -364,13 +381,19 @@ void KeyFrame::UpdateConnections()
         unique_lock<mutex> lockCon(mMutexConnections);
 
         // mspConnectedKeyFrames = spConnectedKeyFrames;
+        //更新当前帧与它关联帧的连接权重
         mConnectedKeyFrameWeights = KFcounter;
+		//调整关联帧的连接顺序
         mvpOrderedConnectedKeyFrames = vector<KeyFrame*>(lKFs.begin(),lKFs.end());
+		//调整关联帧权重顺序
         mvOrderedWeights = vector<int>(lWs.begin(), lWs.end());
 
+		//更新生产树的连接
         if(mbFirstConnection && mnId!=0)
         {
+        	//初始化关键帧的父节点为为共视程度最高的那个关键帧
             mpParent = mvpOrderedConnectedKeyFrames.front();
+			//把当前帧设置为其子节点，建立双向关系
             mpParent->AddChild(this);
             mbFirstConnection = false;
         }
@@ -630,6 +653,7 @@ cv::Mat KeyFrame::UnprojectStereo(int i)
         return cv::Mat();
 }
 
+//评估当前关键帧的场景深度，q=2 表示中值
 float KeyFrame::ComputeSceneMedianDepth(const int q)
 {
     vector<MapPoint*> vpMapPoints;
@@ -637,21 +661,29 @@ float KeyFrame::ComputeSceneMedianDepth(const int q)
     {
         unique_lock<mutex> lock(mMutexFeatures);
         unique_lock<mutex> lock2(mMutexPose);
+		//获取地图点坐标
         vpMapPoints = mvpMapPoints;
+		//获取当前帧位姿
         Tcw_ = Tcw.clone();
     }
 
     vector<float> vDepths;
     vDepths.reserve(N);
+	//获取第二行的0 到3 元素 1x3 矩阵
     cv::Mat Rcw2 = Tcw_.row(2).colRange(0,3);
+	//求旋转矩阵3x1矩阵
     Rcw2 = Rcw2.t();
+	
     float zcw = Tcw_.at<float>(2,3);
     for(int i=0; i<N; i++)
     {
         if(mvpMapPoints[i])
         {
+        	//获取地图点
             MapPoint* pMP = mvpMapPoints[i];
+			//获取地图点的3 维坐标
             cv::Mat x3Dw = pMP->GetWorldPos();
+			//求深度
             float z = Rcw2.dot(x3Dw)+zcw;
             vDepths.push_back(z);
         }

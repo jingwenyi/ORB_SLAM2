@@ -162,7 +162,7 @@ public:
     std::vector<std::size_t> mGrid[FRAME_GRID_COLS][FRAME_GRID_ROWS];
 
     // Camera pose.
-    cv::Mat mTcw;
+    cv::Mat mTcw; //相机位姿的外参矩4x4 
 
     // Current and Next Frame id.
     static long unsigned int nNextId;
@@ -203,9 +203,9 @@ private:
     void AssignFeaturesToGrid();
 
     // Rotation, translation and camera center
-    cv::Mat mRcw;
-    cv::Mat mtcw;
-    cv::Mat mRwc;
+    cv::Mat mRcw; //旋转矩阵 3x3
+    cv::Mat mtcw; //平移矩阵3x1
+    cv::Mat mRwc; // 
     cv::Mat mOw; //==mtwc
 };
 

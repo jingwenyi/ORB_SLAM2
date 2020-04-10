@@ -340,17 +340,23 @@ void Frame::ExtractORB(int flag, const cv::Mat &im)
         (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight);
 }
 
+//用外参矩阵就旋转矩阵和平移矩阵
 void Frame::SetPose(cv::Mat Tcw)
 {
+	//保存外参矩阵
     mTcw = Tcw.clone();
     UpdatePoseMatrices();
 }
 
 void Frame::UpdatePoseMatrices()
 { 
+	//在外参矩阵中提取出旋转矩阵相关的项
     mRcw = mTcw.rowRange(0,3).colRange(0,3);
+	//通过求逆，求出旋转矩阵
     mRwc = mRcw.t();
+	//在外参矩阵中提取出平移矩阵相关的项
     mtcw = mTcw.rowRange(0,3).col(3);
+	// T = -RC , 平移矩阵的逆就是RC 的负数平移向量
     mOw = -mRcw.t()*mtcw;
 }
 
@@ -830,7 +836,7 @@ void Frame::ComputeStereoMatches()
             break;
         else
         {
-        	//删点大于阈值的点
+        	//删掉 大于阈值的点
             mvuRight[vDistIdx[i].second]=-1;
             mvDepth[vDistIdx[i].second]=-1;
         }

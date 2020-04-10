@@ -200,6 +200,7 @@ protected:
     cv::Mat Cw; // Stereo middel point. Only for visualization
 
     // MapPoints associated to keypoints
+    //关键点关联的地图点
     std::vector<MapPoint*> mvpMapPoints;
 
     // BoW
@@ -208,7 +209,7 @@ protected:
 
     // Grid over the image to speed up feature matching
     std::vector< std::vector <std::vector<size_t> > > mGrid;
-
+	//当前帧与关联帧连接权重
     std::map<KeyFrame*,int> mConnectedKeyFrameWeights;
     std::vector<KeyFrame*> mvpOrderedConnectedKeyFrames;
     std::vector<int> mvOrderedWeights;
