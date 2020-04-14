@@ -876,14 +876,19 @@ void Frame::ComputeStereoFromRGBD(const cv::Mat &imDepth)
 
 cv::Mat Frame::UnprojectStereo(const int &i)
 {
+	//获取该特征点的深度值
     const float z = mvDepth[i];
     if(z>0)
     {
+    	//获取该特征点的相机坐标
         const float u = mvKeysUn[i].pt.x;
         const float v = mvKeysUn[i].pt.y;
+		//通过屏幕坐标计算空间坐标
+		//xscreen = fx*(X/Z) + cx, yscreen = fy*(X/Z) + cy
         const float x = (u-cx)*z*invfx;
         const float y = (v-cy)*z*invfy;
         cv::Mat x3Dc = (cv::Mat_<float>(3,1) << x, y, z);
+		//把相机坐标3D 点投影到世界坐标
         return mRwc*x3Dc+mOw;
     }
     else

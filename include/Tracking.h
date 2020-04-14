@@ -105,6 +105,7 @@ public:
 
     // Lists used to recover the full camera trajectory at the end of the execution.
     // Basically we store the reference keyframe for each frame and its relative transformation
+    //保存所有关键帧的位姿
     list<cv::Mat> mlRelativeFramePoses;
     list<KeyFrame*> mlpReferences;
     list<double> mlFrameTimes;
@@ -166,8 +167,11 @@ protected:
     Initializer* mpInitializer;
 
     //Local Map
+    //参考关键帧
     KeyFrame* mpReferenceKF;
+	//局部地图关键帧
     std::vector<KeyFrame*> mvpLocalKeyFrames;
+	//局部地图关键点
     std::vector<MapPoint*> mvpLocalMapPoints;
     
     // System

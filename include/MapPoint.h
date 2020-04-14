@@ -86,7 +86,7 @@ public:
     static long unsigned int nNextId;
     long int mnFirstKFid;
     long int mnFirstFrame;
-    int nObs;
+    int nObs; //能够观测到该地图点的关键帧个数
 
     // Variables used by the tracking
     float mTrackProjX;

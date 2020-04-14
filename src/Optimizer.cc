@@ -262,11 +262,14 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, 	//关键帧
 
 }
 
+//用g2o 进行优化，只优化位姿，不优化地图点
 int Optimizer::PoseOptimization(Frame *pFrame)
 {
+	//构造g2o  优化器
     g2o::SparseOptimizer optimizer;
     g2o::BlockSolver_6_3::LinearSolverType * linearSolver;
 
+	//初始化g2o 优化对象
     linearSolver = new g2o::LinearSolverDense<g2o::BlockSolver_6_3::PoseMatrixType>();
 
     g2o::BlockSolver_6_3 * solver_ptr = new g2o::BlockSolver_6_3(linearSolver);
@@ -277,6 +280,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     int nInitialCorrespondences=0;
 
     // Set Frame vertex
+    //添加顶点:  待优化当前帧的tcw
     g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
     vSE3->setEstimate(Converter::toSE3Quat(pFrame->mTcw));
     vSE3->setId(0);
@@ -299,25 +303,29 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     const float deltaMono = sqrt(5.991);
     const float deltaStereo = sqrt(7.815);
 
-
+	//添加一元边: 相机投影模型
     {
     unique_lock<mutex> lock(MapPoint::mGlobalMutex);
 
     for(int i=0; i<N; i++)
     {
+    	//获取地图点
         MapPoint* pMP = pFrame->mvpMapPoints[i];
         if(pMP)
         {
             // Monocular observation
+            //单目情况
             if(pFrame->mvuRight[i]<0)
             {
                 nInitialCorrespondences++;
                 pFrame->mvbOutlier[i] = false;
 
                 Eigen::Matrix<double,2,1> obs;
+				//获取该地图点的关键点坐标
                 const cv::KeyPoint &kpUn = pFrame->mvKeysUn[i];
                 obs << kpUn.pt.x, kpUn.pt.y;
 
+				//边优化
                 g2o::EdgeSE3ProjectXYZOnlyPose* e = new g2o::EdgeSE3ProjectXYZOnlyPose();
 
                 e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(0)));
@@ -343,13 +351,14 @@ int Optimizer::PoseOptimization(Frame *pFrame)
                 vpEdgesMono.push_back(e);
                 vnIndexEdgeMono.push_back(i);
             }
-            else  // Stereo observation
+            else  // Stereo observation  双目
             {
                 nInitialCorrespondences++;
                 pFrame->mvbOutlier[i] = false;
 
                 //SET EDGE
                 Eigen::Matrix<double,3,1> obs;
+				//获取左右两边对应关键点坐标
                 const cv::KeyPoint &kpUn = pFrame->mvKeysUn[i];
                 const float &kp_ur = pFrame->mvuRight[i];
                 obs << kpUn.pt.x, kpUn.pt.y, kp_ur;
@@ -392,8 +401,10 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
     // We perform 4 optimizations, after each optimization we classify observation as inlier/outlier
     // At the next optimization, outliers are not included, but at the end they can be classified as inliers again.
+    //进行4 次优化
     const float chi2Mono[4]={5.991,5.991,5.991,5.991};
     const float chi2Stereo[4]={7.815,7.815,7.815, 7.815};
+	//四次迭代每次迭代的次数
     const int its[4]={10,10,10,10};    
 
     int nBad=0;
@@ -401,6 +412,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     {
 
         vSE3->setEstimate(Converter::toSE3Quat(pFrame->mTcw));
+		//对level 为0 的边进行优化
         optimizer.initializeOptimization(0);
         optimizer.optimize(its[it]);
 
@@ -413,19 +425,22 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
             if(pFrame->mvbOutlier[idx])
             {
+            	//计算误差
                 e->computeError();
             }
 
             const float chi2 = e->chi2();
 
             if(chi2>chi2Mono[it])
-            {                
+            { 
+            	//设置为外点
                 pFrame->mvbOutlier[idx]=true;
                 e->setLevel(1);
                 nBad++;
             }
             else
             {
+            	//设置为内点
                 pFrame->mvbOutlier[idx]=false;
                 e->setLevel(0);
             }
@@ -468,8 +483,10 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     }    
 
     // Recover optimized pose and return number of inliers
+    //恢复优化后的姿态
     g2o::VertexSE3Expmap* vSE3_recov = static_cast<g2o::VertexSE3Expmap*>(optimizer.vertex(0));
     g2o::SE3Quat SE3quat_recov = vSE3_recov->estimate();
+	//获取优化后的姿态
     cv::Mat pose = Converter::toCvMat(SE3quat_recov);
     pFrame->SetPose(pose);
 

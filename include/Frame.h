@@ -169,6 +169,7 @@ public:
     long unsigned int mnId;
 
     // Reference Keyframe.
+    //当前帧的参考关键帧
     KeyFrame* mpReferenceKF;
 
     // Scale pyramid info.
