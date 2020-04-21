@@ -152,7 +152,9 @@ protected:
     bool mbVO;
 
     //Other Thread Pointers
+    //局部 建图线程指针
     LocalMapping* mpLocalMapper;
+	//回环检测线程指针
     LoopClosing* mpLoopClosing;
 
     //ORB

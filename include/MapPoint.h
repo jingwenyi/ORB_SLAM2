@@ -84,6 +84,7 @@ public:
 public:
     long unsigned int mnId;
     static long unsigned int nNextId;
+	//检测到该地图点的第一帧
     long int mnFirstKFid;
     long int mnFirstFrame;
     int nObs; //能够观测到该地图点的关键帧个数
@@ -118,23 +119,28 @@ protected:
      cv::Mat mWorldPos;
 
      // Keyframes observing the point and associated index in keyframe
-     //观察到该地图点的所有关键帧
+     //观察到该地图点的所有关键帧， size_t 是该关键帧对应的特征点
      std::map<KeyFrame*,size_t> mObservations;
 
      // Mean viewing direction
+     //平均观察方向
      cv::Mat mNormalVector;
 
      // Best descriptor to fast matching
+     //地图点的描述子
      cv::Mat mDescriptor;
 
      // Reference KeyFrame
+     //该地图点的参考关键帧
      KeyFrame* mpRefKF;
 
      // Tracking counters
+     //跟踪计数器
      int mnVisible;
      int mnFound;
 
      // Bad flag (we do not currently erase MapPoint from memory)
+     //地图点是否可用
      bool mbBad;
      MapPoint* mpReplaced;
 

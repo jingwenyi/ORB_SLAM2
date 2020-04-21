@@ -99,15 +99,17 @@ protected:
     bool mbFinished;
     std::mutex mMutexFinish;
 
-    Map* mpMap;
+    Map* mpMap; //局部地图指针
 
     LoopClosing* mpLoopCloser;
     Tracking* mpTracker;
 
+	//跟踪线程发送的关键帧保存链表
     std::list<KeyFrame*> mlNewKeyFrames;
 
     KeyFrame* mpCurrentKeyFrame;
 
+	//最近添加的地图点
     std::list<MapPoint*> mlpRecentAddedMapPoints;
 
     std::mutex mMutexNewKFs;
@@ -119,6 +121,7 @@ protected:
     bool mbNotStop;
     std::mutex mMutexStop;
 
+	//是否接受关键帧
     bool mbAcceptKeyFrames;
     std::mutex mMutexAccept;
 };

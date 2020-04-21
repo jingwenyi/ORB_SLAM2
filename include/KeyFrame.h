@@ -171,6 +171,7 @@ public:
     DBoW2::FeatureVector mFeatVec;
 
     // Pose relative to parent (this is computed when bad flag is activated)
+    //相对于父节点的位姿，在设置bad 标志是计算
     cv::Mat mTcp;
 
     // Scale
@@ -204,14 +205,17 @@ protected:
     std::vector<MapPoint*> mvpMapPoints;
 
     // BoW
+    //关键帧数据库
     KeyFrameDatabase* mpKeyFrameDB;
     ORBVocabulary* mpORBvocabulary;
 
     // Grid over the image to speed up feature matching
     std::vector< std::vector <std::vector<size_t> > > mGrid;
-	//当前帧与关联帧连接权重
+	//当前帧与关联帧连接权重，每个关键帧都有一个共视地图
     std::map<KeyFrame*,int> mConnectedKeyFrameWeights;
+	//当前关键帧共视关键帧向量
     std::vector<KeyFrame*> mvpOrderedConnectedKeyFrames;
+	//当前关键帧共视关键帧向量对应的权重
     std::vector<int> mvOrderedWeights;
 
     // Spanning Tree and Loop Edges
@@ -222,12 +226,15 @@ protected:
     std::set<KeyFrame*> mspLoopEdges;
 
     // Bad flags
+    //不应该删掉标志
     bool mbNotErase;
     bool mbToBeErased;
+	//该关键帧bad 标志
     bool mbBad;    
 
     float mHalfBaseline; // Only for visualization
 
+	//关键帧局部地图
     Map* mpMap;
 
     std::mutex mMutexPose;

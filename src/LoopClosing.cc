@@ -87,6 +87,7 @@ void LoopClosing::Run()
     SetFinish();
 }
 
+//给loopClosing 线程插入新的关键帧
 void LoopClosing::InsertKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexLoopQueue);

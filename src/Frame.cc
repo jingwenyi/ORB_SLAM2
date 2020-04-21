@@ -360,54 +360,75 @@ void Frame::UpdatePoseMatrices()
     mOw = -mRcw.t()*mtcw;
 }
 
-bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
+//判断一个点是否在视野范围内
+//计算重投影坐标，观测方向夹角， 预测地图点在当前帧的金字塔层数
+bool Frame::isInFrustum(MapPoint *pMP,  //地图点 
+							float viewingCosLimit) //视角和平均视角的方向阈值
 {
+	//标记该点不要被映射
     pMP->mbTrackInView = false;
 
     // 3D in absolute coordinates
+    //获取地图点的世界坐标
     cv::Mat P = pMP->GetWorldPos(); 
 
     // 3D in camera coordinates
+    //计算3D 点 p  在相机坐标下的坐标
     const cv::Mat Pc = mRcw*P+mtcw;
     const float &PcX = Pc.at<float>(0);
     const float &PcY= Pc.at<float>(1);
     const float &PcZ = Pc.at<float>(2);
 
     // Check positive depth
+    //检查深度是否为正
     if(PcZ<0.0f)
         return false;
 
     // Project in image and check it is not outside
+    //把相机坐标下的3D 点 Pc 投影到相机平面
+    // xscreen = fx*(X/Z) + cx, yscreen = fy*(Y/Z) + cy
     const float invz = 1.0f/PcZ;
     const float u=fx*PcX*invz+cx;
     const float v=fy*PcY*invz+cy;
 
+	//检查该点是否在该帧中
     if(u<mnMinX || u>mnMaxX)
         return false;
     if(v<mnMinY || v>mnMaxY)
         return false;
 
     // Check distance is in the scale invariance region of the MapPoint
+    //获取地图点距离的范围
     const float maxDistance = pMP->GetMaxDistanceInvariance();
     const float minDistance = pMP->GetMinDistanceInvariance();
+	//计算地图点到相机中心的距离
+	//世界坐标下，相机到点P 的向量，向量方向有相机指向点P
     const cv::Mat PO = P-mOw;
+	//求向量的距离
     const float dist = cv::norm(PO);
 
+	//判读是否尺度变化的范围内
     if(dist<minDistance || dist>maxDistance)
         return false;
 
    // Check viewing angle
+   //获取地图点的平均视角方向向量
     cv::Mat Pn = pMP->GetNormal();
 
+	//计算当前视角向量和平均视角向量的余弦值
+	//cos(ab) = a.b/(|a|*|b|)，|Pn| = 1
     const float viewCos = PO.dot(Pn)/dist;
 
+	//若小于cos(60)  即夹角大于60度， 则返回
     if(viewCos<viewingCosLimit)
         return false;
 
     // Predict scale in the image
+    //根据深度预测尺寸，对应特征点在图像金字塔的那一层
     const int nPredictedLevel = pMP->PredictScale(dist,this);
 
     // Data used by the tracking
+    //标记该点将要被映射
     pMP->mbTrackInView = true;
     pMP->mTrackProjX = u;
     pMP->mTrackProjXR = u - mbf*invz;
@@ -874,6 +895,7 @@ void Frame::ComputeStereoFromRGBD(const cv::Mat &imDepth)
     }
 }
 
+//计算关键点对于的世界坐标点
 cv::Mat Frame::UnprojectStereo(const int &i)
 {
 	//获取该特征点的深度值

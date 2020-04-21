@@ -112,6 +112,7 @@ protected:
 
     LocalMapping *mpLocalMapper;
 
+	//±’ª∑ºÏ≤‚∂”¡–
     std::list<KeyFrame*> mlpLoopKeyFrameQueue;
 
     std::mutex mMutexLoopQueue;
