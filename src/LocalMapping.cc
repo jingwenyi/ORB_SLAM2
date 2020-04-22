@@ -46,6 +46,7 @@ void LocalMapping::SetTracker(Tracking *pTracker)
 
 //局部建图
 //处理新的关键帧，使用local  BA  完成建图
+//创建新的地图点，并根据后面的关键帧优化地图点
 void LocalMapping::Run()
 {
 
@@ -340,13 +341,18 @@ void LocalMapping::CreateNewMapPoints()
 		//通过极线约束限制匹配时的搜索范围， 进行特征点匹配
         matcher.SearchForTriangulation(mpCurrentKeyFrame,pKF2,F12,vMatchedIndices,false);
 
+		//获取李群旋转矩阵
         cv::Mat Rcw2 = pKF2->GetRotation();
+		//求转置
         cv::Mat Rwc2 = Rcw2.t();
+		//获取李群平移矩阵
         cv::Mat tcw2 = pKF2->GetTranslation();
+		//f2 帧的位姿
         cv::Mat Tcw2(3,4,CV_32F);
         Rcw2.copyTo(Tcw2.colRange(0,3));
         tcw2.copyTo(Tcw2.col(3));
 
+		//f2 相机的内参
         const float &fx2 = pKF2->fx;
         const float &fy2 = pKF2->fy;
         const float &cx2 = pKF2->cx;
@@ -355,13 +361,19 @@ void LocalMapping::CreateNewMapPoints()
         const float &invfy2 = pKF2->invfy;
 
         // Triangulate each match
+        //对每个匹配，通过三角化生产3D 点
+        //获取匹配的大小
         const int nmatches = vMatchedIndices.size();
+		//遍历所有匹配
         for(int ikp=0; ikp<nmatches; ikp++)
         {
+        	//获取匹配的索引
             const int &idx1 = vMatchedIndices[ikp].first;
             const int &idx2 = vMatchedIndices[ikp].second;
 
+			//获取匹配对应的关键点
             const cv::KeyPoint &kp1 = mpCurrentKeyFrame->mvKeysUn[idx1];
+			//mvuRight 保存着双目的深度，如果不是双目，其值为-1
             const float kp1_ur=mpCurrentKeyFrame->mvuRight[idx1];
             bool bStereo1 = kp1_ur>=0;
 
@@ -370,24 +382,45 @@ void LocalMapping::CreateNewMapPoints()
             bool bStereo2 = kp2_ur>=0;
 
             // Check parallax between rays
+            //利用匹配点的反投影得到视场角
+            //特征点反投影
+            //用像素平面的坐标求空间坐标 xscreen = fx(X/Z)+ cx, yscreen = fy(Y/Z) + cy
+            //Z = 1, X = (xscreen - cx)/fx  Y = (yscreen - cy)/fy
             cv::Mat xn1 = (cv::Mat_<float>(3,1) << (kp1.pt.x-cx1)*invfx1, (kp1.pt.y-cy1)*invfy1, 1.0);
             cv::Mat xn2 = (cv::Mat_<float>(3,1) << (kp2.pt.x-cx2)*invfx2, (kp2.pt.y-cy2)*invfy2, 1.0);
 
+			//由相机坐标系转到世界坐标系
             cv::Mat ray1 = Rwc1*xn1;
             cv::Mat ray2 = Rwc2*xn2;
+			//计算视差角余弦值  cos(a,b) = a.b/(|a||b|)
+			//这里求的是角3
             const float cosParallaxRays = ray1.dot(ray2)/(cv::norm(ray1)*cv::norm(ray2));
 
+			//+1 是为了让cosParallaxStereo 随便初始化一个很大的值
             float cosParallaxStereo = cosParallaxRays+1;
             float cosParallaxStereo1 = cosParallaxStereo;
             float cosParallaxStereo2 = cosParallaxStereo;
 
+			//对应双目，利用双目得到视差角
+			//		        p
+			//			.
+			//		      /|3\		     
+			//		    /  | depth
+			//		  /1	|    2\
+			//            -------- mb
+			// angle1 = atan2(mb/2, depth)
             if(bStereo1)
                 cosParallaxStereo1 = cos(2*atan2(mpCurrentKeyFrame->mb/2,mpCurrentKeyFrame->mvDepth[idx1]));
             else if(bStereo2)
                 cosParallaxStereo2 = cos(2*atan2(pKF2->mb/2,pKF2->mvDepth[idx2]));
 
+			//获取一个最小的视差角
             cosParallaxStereo = min(cosParallaxStereo1,cosParallaxStereo2);
 
+			//三角化恢复3D 点
+			//cosParallaxRays>0 && (bStereo1 || bStereo2 || cosParallaxRays<0.9998)  表明视差角正常
+			//cosParallaxRays<cosParallaxStereo 视差角很小
+			//视差角小时用三角化恢复3D 点，视场角大时用双目恢复3D 点
             cv::Mat x3D;
             if(cosParallaxRays<cosParallaxStereo && cosParallaxRays>0 && (bStereo1 || bStereo2 || cosParallaxRays<0.9998))
             {
@@ -407,6 +440,7 @@ void LocalMapping::CreateNewMapPoints()
                     continue;
 
                 // Euclidean coordinates
+                //生产的3D 点
                 x3D = x3D.rowRange(0,3)/x3D.at<float>(3);
 
             }
@@ -424,6 +458,7 @@ void LocalMapping::CreateNewMapPoints()
             cv::Mat x3Dt = x3D.t();
 
             //Check triangulation in front of cameras
+            //检查生成的3D 点是否在相机前方
             float z1 = Rcw1.row(2).dot(x3Dt)+tcw1.at<float>(2);
             if(z1<=0)
                 continue;
@@ -433,6 +468,7 @@ void LocalMapping::CreateNewMapPoints()
                 continue;
 
             //Check reprojection error in first keyframe
+            //计算3D 点在当前关键帧下的重投影
             const float &sigmaSquare1 = mpCurrentKeyFrame->mvLevelSigma2[kp1.octave];
             const float x1 = Rcw1.row(0).dot(x3Dt)+tcw1.at<float>(0);
             const float y1 = Rcw1.row(1).dot(x3Dt)+tcw1.at<float>(1);
@@ -444,6 +480,7 @@ void LocalMapping::CreateNewMapPoints()
                 float v1 = fy1*y1*invz1+cy1;
                 float errX1 = u1 - kp1.pt.x;
                 float errY1 = v1 - kp1.pt.y;
+				//基于卡方检验计算出阈值，假设测量有一个像素的偏差
                 if((errX1*errX1+errY1*errY1)>5.991*sigmaSquare1)
                     continue;
             }
@@ -459,7 +496,8 @@ void LocalMapping::CreateNewMapPoints()
                     continue;
             }
 
-            //Check reprojection error in second keyframe
+            //Check reprojection error in second keyfram
+            //计算3D 点在另一个关键帧上的重投影
             const float sigmaSquare2 = pKF2->mvLevelSigma2[kp2.octave];
             const float x2 = Rcw2.row(0).dot(x3Dt)+tcw2.at<float>(0);
             const float y2 = Rcw2.row(1).dot(x3Dt)+tcw2.at<float>(1);
@@ -486,6 +524,7 @@ void LocalMapping::CreateNewMapPoints()
             }
 
             //Check scale consistency
+            //检查尺度连续性
             cv::Mat normal1 = x3D-Ow1;
             float dist1 = cv::norm(normal1);
 
@@ -495,28 +534,40 @@ void LocalMapping::CreateNewMapPoints()
             if(dist1==0 || dist2==0)
                 continue;
 
+			//距离比
             const float ratioDist = dist2/dist1;
+			//金字塔尺度因子比例
             const float ratioOctave = mpCurrentKeyFrame->mvScaleFactors[kp1.octave]/pKF2->mvScaleFactors[kp2.octave];
 
             /*if(fabs(ratioDist-ratioOctave)>ratioFactor)
                 continue;*/
+            //表明尺度变化是不连续的
             if(ratioDist*ratioFactor<ratioOctave || ratioDist>ratioOctave*ratioFactor)
                 continue;
 
             // Triangulation is succesfull
+            //
+            //三角化生成3D 点成功，构造地图点
             MapPoint* pMP = new MapPoint(x3D,mpCurrentKeyFrame,mpMap);
 
+			//为该地图点添加属性
+			//添加观测帧和特征点
             pMP->AddObservation(mpCurrentKeyFrame,idx1);            
             pMP->AddObservation(pKF2,idx2);
 
+			//为关注添加地图带你
             mpCurrentKeyFrame->AddMapPoint(pMP,idx1);
             pKF2->AddMapPoint(pMP,idx2);
 
+			//更新地图点的描述子
             pMP->ComputeDistinctiveDescriptors();
 
+			//更新地图点的平均观测方向和深度范围
             pMP->UpdateNormalAndDepth();
 
+			//把地图点插入到局部地图中
             mpMap->AddMapPoint(pMP);
+			//将新产生的点放入检查队列
             mlpRecentAddedMapPoints.push_back(pMP);
 
             nnew++;
@@ -571,6 +622,7 @@ void LocalMapping::SearchInNeighbors()
 	//获取当前帧地图点
     vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
 	//遍历当前帧的融合目标帧
+	//把当前帧 地图点投影到相邻的帧上，进行地图点的融合
     for(vector<KeyFrame*>::iterator vit=vpTargetKFs.begin(), vend=vpTargetKFs.end(); vit!=vend; vit++)
     {
     	//获取每个帧
@@ -582,31 +634,44 @@ void LocalMapping::SearchInNeighbors()
     }
 
     // Search matches by projection from target KFs in current KF
+    //这里开了一个当前帧的地图点个数 x  所有相邻帧的个数大小的向量
     vector<MapPoint*> vpFuseCandidates;
     vpFuseCandidates.reserve(vpTargetKFs.size()*vpMapPointMatches.size());
 
+	//遍历当前帧的融合目标帧
+	//把相邻帧地图点重投影到当前帧上，进行地图点的融合
     for(vector<KeyFrame*>::iterator vitKF=vpTargetKFs.begin(), vendKF=vpTargetKFs.end(); vitKF!=vendKF; vitKF++)
     {
+    	//获取相邻的每一帧
         KeyFrame* pKFi = *vitKF;
 
+		//获取相邻帧的地图点
         vector<MapPoint*> vpMapPointsKFi = pKFi->GetMapPointMatches();
 
+		//遍历相邻帧的地图点
         for(vector<MapPoint*>::iterator vitMP=vpMapPointsKFi.begin(), vendMP=vpMapPointsKFi.end(); vitMP!=vendMP; vitMP++)
         {
+        	//获取地图点
             MapPoint* pMP = *vitMP;
+			//地图点null
             if(!pMP)
                 continue;
+			
             if(pMP->isBad() || pMP->mnFuseCandidateForKF == mpCurrentKeyFrame->mnId)
                 continue;
+			//设置融合标志，防止别的相邻帧加入该地图点
             pMP->mnFuseCandidateForKF = mpCurrentKeyFrame->mnId;
+			//放入融合候选向量中
             vpFuseCandidates.push_back(pMP);
         }
     }
 
+	//进行融合
     matcher.Fuse(mpCurrentKeyFrame,vpFuseCandidates);
 
 
     // Update points
+    //更新当前帧的地图点
     vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
     for(size_t i=0, iend=vpMapPointMatches.size(); i<iend; i++)
     {
@@ -615,13 +680,16 @@ void LocalMapping::SearchInNeighbors()
         {
             if(!pMP->isBad())
             {
+            	//重新计算地图点的描述子
                 pMP->ComputeDistinctiveDescriptors();
+				//更新地图点平均观测方向和观测距离范围
                 pMP->UpdateNormalAndDepth();
             }
         }
     }
 
     // Update connections in covisibility graph
+    //更新关键帧共视图
     mpCurrentKeyFrame->UpdateConnections();
 }
 

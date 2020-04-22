@@ -137,6 +137,7 @@ public:
     long unsigned int mnFuseTargetForKF;
 
     // Variables used by the local mapping
+    //局部映射使用的变量
     long unsigned int mnBALocalForKF;
     long unsigned int mnBAFixedForKF;
 
@@ -162,6 +163,7 @@ public:
     // KeyPoints, stereo coordinate and descriptors (all associated by an index)
     const std::vector<cv::KeyPoint> mvKeys;
     const std::vector<cv::KeyPoint> mvKeysUn;
+	//保存双目的深度
     const std::vector<float> mvuRight; // negative value for monocular points
     const std::vector<float> mvDepth; // negative value for monocular points
     const cv::Mat mDescriptors;
@@ -194,8 +196,10 @@ public:
 protected:
 
     // SE3 Pose and camera center
+    //se3 李群旋转坐标
     cv::Mat Tcw;
     cv::Mat Twc;
+	//相机中心
     cv::Mat Ow;
 
     cv::Mat Cw; // Stereo middel point. Only for visualization

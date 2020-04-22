@@ -116,6 +116,7 @@ public:
 protected:    
 
      // Position in absolute coordinates
+     //世界坐标位置
      cv::Mat mWorldPos;
 
      // Keyframes observing the point and associated index in keyframe

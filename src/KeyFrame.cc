@@ -99,6 +99,7 @@ cv::Mat KeyFrame::GetPoseInverse()
     return Twc.clone();
 }
 
+//获取相机中心
 cv::Mat KeyFrame::GetCameraCenter()
 {
     unique_lock<mutex> lock(mMutexPose);
@@ -309,6 +310,7 @@ MapPoint* KeyFrame::GetMapPoint(const size_t &idx)
 }
 
 //更新图的连接
+//当前帧的共视帧，按照共视权重进行排序
 void KeyFrame::UpdateConnections()
 {
     map<KeyFrame*,int> KFcounter;
