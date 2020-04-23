@@ -142,8 +142,12 @@ public:
     long unsigned int mnBAFixedForKF;
 
     // Variables used by the keyframe database
+    //关键帧数据使用变量
+    //当前关键帧回环检测候选帧id
     long unsigned int mnLoopQuery;
+	//与当前帧有共同词汇的个数
     int mnLoopWords;
+	//与当前帧的相似度得分
     float mLoopScore;
     long unsigned int mnRelocQuery;
     int mnRelocWords;
@@ -169,7 +173,9 @@ public:
     const cv::Mat mDescriptors;
 
     //BoW
+    //视觉词袋的词汇向量
     DBoW2::BowVector mBowVec;
+	//视觉词袋的特征向量
     DBoW2::FeatureVector mFeatVec;
 
     // Pose relative to parent (this is computed when bad flag is activated)

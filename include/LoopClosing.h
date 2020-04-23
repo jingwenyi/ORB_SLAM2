@@ -45,6 +45,7 @@ class LoopClosing
 {
 public:
 
+	//连续的组， 关键帧，连续性权重
     typedef pair<set<KeyFrame*>,int> ConsistentGroup;    
     typedef map<KeyFrame*,g2o::Sim3,std::less<KeyFrame*>,
         Eigen::aligned_allocator<std::pair<const KeyFrame*, g2o::Sim3> > > KeyFrameAndPose;
@@ -107,23 +108,27 @@ protected:
     Map* mpMap;
     Tracking* mpTracker;
 
+	//关键帧数据库
     KeyFrameDatabase* mpKeyFrameDB;
     ORBVocabulary* mpORBVocabulary;
 
     LocalMapping *mpLocalMapper;
 
-	//闭环检测队列
+	//闭环检测队列, 关键帧由局部建图线程传过来
     std::list<KeyFrame*> mlpLoopKeyFrameQueue;
 
     std::mutex mMutexLoopQueue;
 
     // Loop detector parameters
+    //连续性阈值3
     float mnCovisibilityConsistencyTh;
 
     // Loop detector variables
     KeyFrame* mpCurrentKF;
     KeyFrame* mpMatchedKF;
+	//子连续组
     std::vector<ConsistentGroup> mvConsistentGroups;
+	//有足够连续性的闭环候选帧
     std::vector<KeyFrame*> mvpEnoughConsistentCandidates;
     std::vector<KeyFrame*> mvpCurrentConnectedKFs;
     std::vector<MapPoint*> mvpCurrentMatchedPoints;
@@ -131,6 +136,7 @@ protected:
     cv::Mat mScw;
     g2o::Sim3 mg2oScw;
 
+	//闭环检测上次关键帧id
     long unsigned int mLastLoopKFid;
 
     // Variables related to Global Bundle Adjustment
