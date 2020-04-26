@@ -124,14 +124,18 @@ protected:
     float mnCovisibilityConsistencyTh;
 
     // Loop detector variables
+    //闭环检测的当前帧
     KeyFrame* mpCurrentKF;
+	//闭环匹配成功的帧
     KeyFrame* mpMatchedKF;
 	//子连续组
     std::vector<ConsistentGroup> mvConsistentGroups;
 	//有足够连续性的闭环候选帧
     std::vector<KeyFrame*> mvpEnoughConsistentCandidates;
     std::vector<KeyFrame*> mvpCurrentConnectedKFs;
+	//当前帧已经匹配成功的地图点
     std::vector<MapPoint*> mvpCurrentMatchedPoints;
+	//闭环的地图点
     std::vector<MapPoint*> mvpLoopMapPoints;
     cv::Mat mScw;
     g2o::Sim3 mg2oScw;

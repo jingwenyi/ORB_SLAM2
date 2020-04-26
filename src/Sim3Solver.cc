@@ -137,6 +137,7 @@ void Sim3Solver::SetRansacParameters(double probability, int minInliers, int max
     mnIterations = 0;
 }
 
+//随机抽样求解mv3Dc1 和mvx3dc2 之间的sim3, 函数返回mvx3dc2 到mvx3Dc1 的sim3 变换
 cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers)
 {
     bNoMore = false;
@@ -163,6 +164,7 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
         vAvailableIndices = mvAllIndices;
 
         // Get min set of points
+        //任意取 3 个点做sim 矩阵
         for(short i = 0; i < 3; ++i)
         {
             int randi = DUtils::Random::RandomInt(0, vAvailableIndices.size()-1);
@@ -176,8 +178,10 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
             vAvailableIndices.pop_back();
         }
 
+		//根据两组匹配的3D 点，计算sim3 变换
         ComputeSim3(P3Dc1i,P3Dc2i);
 
+		//通过投影误差进行内点检测
         CheckInliers();
 
         if(mnInliersi>=mnBestInliers)
@@ -195,6 +199,8 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
                 for(int i=0; i<N; i++)
                     if(mvbInliersi[i])
                         vbInliers[mvnIndices1[i]] = true;
+				//只要计算得到一次合格的sim 变换，就直接返回
+				//没有所有的内点进行一次refine 操作
                 return mBestT12;
             }
         }

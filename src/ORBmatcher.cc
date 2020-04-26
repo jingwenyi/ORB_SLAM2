@@ -383,47 +383,70 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF, //参考帧
     return nmatches;
 }
 
-int ORBmatcher::SearchByProjection(KeyFrame* pKF, cv::Mat Scw, const vector<MapPoint*> &vpPoints, vector<MapPoint*> &vpMatched, int th)
+//用于闭环检测中将地图点和关键帧的特征点进行关联
+//根据sim3 变换，将每个地图点，投影到pkf 上，并根据尺度确定一个搜索区域
+//根据该地图点的描述子与该区域内的特征点进行匹配，如果匹配误差小于50 ，
+//即匹配成功，更新匹配
+int ORBmatcher::SearchByProjection(KeyFrame* pKF, //闭环检测的当前帧
+										cv::Mat Scw, 	//时间坐标系到当前帧的sim3 变换矩阵
+										const vector<MapPoint*> &vpPoints, //闭环检测的地图点
+										vector<MapPoint*> &vpMatched, //匹配成功的地图点
+										int th)							//阈值  10
 {
     // Get Calibration Parameters for later projection
+    //获取相机内参
     const float &fx = pKF->fx;
     const float &fy = pKF->fy;
     const float &cx = pKF->cx;
     const float &cy = pKF->cy;
 
     // Decompose Scw
+    //scwd的形式为[sR, st]
     cv::Mat sRcw = Scw.rowRange(0,3).colRange(0,3);
+	//计算得到尺度s
     const float scw = sqrt(sRcw.row(0).dot(sRcw.row(0)));
+	//R = sR / s
     cv::Mat Rcw = sRcw/scw;
+	//t = st / t
     cv::Mat tcw = Scw.rowRange(0,3).col(3)/scw;
+	//世界坐标系下， pkf 到世界坐标系的位姿，方向由pkf指向世界坐标系
     cv::Mat Ow = -Rcw.t()*tcw;
 
     // Set of MapPoints already found in the KeyFrame
+    //把闭环的地图点放入set 集合中，加速查找匹配
     set<MapPoint*> spAlreadyFound(vpMatched.begin(), vpMatched.end());
+	//删掉集合中的所有null 的地图点
     spAlreadyFound.erase(static_cast<MapPoint*>(NULL));
 
     int nmatches=0;
 
     // For each Candidate MapPoint Project and Match
+    //遍历每一个地图点，为地图点找到匹配的特征点
     for(int iMP=0, iendMP=vpPoints.size(); iMP<iendMP; iMP++)
     {
+    	//获取地图点
         MapPoint* pMP = vpPoints[iMP];
 
         // Discard Bad MapPoints and already found
+        //丢弃坏的地图点和已经匹配的地图点
         if(pMP->isBad() || spAlreadyFound.count(pMP))
             continue;
 
         // Get 3D Coords.
+        //获取该地图点的世界坐标3D 点
         cv::Mat p3Dw = pMP->GetWorldPos();
 
         // Transform into Camera Coords.
+        //把地图点转到摄像机坐标系
         cv::Mat p3Dc = Rcw*p3Dw+tcw;
 
         // Depth must be positive
+        //深度必须大于0， 在设计及前方的点
         if(p3Dc.at<float>(2)<0.0)
             continue;
 
         // Project into Image
+        //计算相机平面上对应的相机坐标
         const float invz = 1/p3Dc.at<float>(2);
         const float x = p3Dc.at<float>(0)*invz;
         const float y = p3Dc.at<float>(1)*invz;
@@ -432,69 +455,95 @@ int ORBmatcher::SearchByProjection(KeyFrame* pKF, cv::Mat Scw, const vector<MapP
         const float v = fy*y+cy;
 
         // Point must be inside the image
+        //检查计算的相机坐标是否在图像有效范围内
         if(!pKF->IsInImage(u,v))
             continue;
 
         // Depth must be inside the scale invariance region of the point
+        //获取地图点到相机的深度范围
         const float maxDistance = pMP->GetMaxDistanceInvariance();
         const float minDistance = pMP->GetMinDistanceInvariance();
+		//计算地图点到相机中心的向量
         cv::Mat PO = p3Dw-Ow;
+		//计算向量的模
         const float dist = cv::norm(PO);
 
+		//该距离是否在深度范围内
         if(dist<minDistance || dist>maxDistance)
             continue;
 
         // Viewing angle must be less than 60 deg
+        //平均观察方向
         cv::Mat Pn = pMP->GetNormal();
 
+		//计算该帧对地图点的观测方向与地图点的平均观测方向的夹角， 大于60 表示太大
+		//cos(a,b) = a.b/|a||b|, |Pn| = 1
         if(PO.dot(Pn)<0.5*dist)
             continue;
 
+		//通过距离预测地图点在当前帧图像金字塔的那一层
         int nPredictedLevel = pMP->PredictScale(dist,pKF);
 
         // Search in a radius
+        //计算搜索半径阈值
         const float radius = th*pKF->mvScaleFactors[nPredictedLevel];
 
+		//找出关键帧在阈值内的所有特征点
         const vector<size_t> vIndices = pKF->GetFeaturesInArea(u,v,radius);
 
+		//一个特征点都没有找到
         if(vIndices.empty())
             continue;
 
         // Match to the most similar keypoint in the radius
+        //获取地图点的描述子
         const cv::Mat dMP = pMP->GetDescriptor();
 
         int bestDist = 256;
         int bestIdx = -1;
+		//遍历找到的所有的特征点
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
         {
+        	//获取特征点的idx
             const size_t idx = *vit;
+			//查看pkf中该特征点是否已经匹配地图点
             if(vpMatched[idx])
                 continue;
 
+			//获取特征点的图像金字塔层
             const int &kpLevel= pKF->mvKeysUn[idx].octave;
 
+			//检查该特征点的图像金字塔层是否在之前估计的层中或者下一层
             if(kpLevel<nPredictedLevel-1 || kpLevel>nPredictedLevel)
                 continue;
 
+			//获取该特征点的描述子
             const cv::Mat &dKF = pKF->mDescriptors.row(idx);
 
+			//计算描述子的汉明距离
             const int dist = DescriptorDistance(dMP,dKF);
 
+			//找到汉明距离最小的那个
             if(dist<bestDist)
             {
                 bestDist = dist;
+				//对应的特征点idx
                 bestIdx = idx;
             }
         }
 
+		//如果检测到的最小的汉明距离小于50
         if(bestDist<=TH_LOW)
         {
+        	//给特征点添加对应的地图点
             vpMatched[bestIdx]=pMP;
+			//匹配成功加1
             nmatches++;
         }
 
     }
 
+	//返回匹配成功数
     return nmatches;
 }
 

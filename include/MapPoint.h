@@ -104,6 +104,7 @@ public:
     long unsigned int mnFuseCandidateForKF;
 
     // Variables used by loop closing
+    //针对哪个帧的闭环 地图点
     long unsigned int mnLoopPointForKF;
     long unsigned int mnCorrectedByKF;
     long unsigned int mnCorrectedReference;    
@@ -146,6 +147,7 @@ protected:
      MapPoint* mpReplaced;
 
      // Scale invariance distances
+     //地图点深度的距离范围
      float mfMinDistance;
      float mfMaxDistance;
 
