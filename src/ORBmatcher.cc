@@ -1386,43 +1386,70 @@ int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoi
     return nFused;
 }
 
-int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &vpMatches12,
-                             const float &s12, const cv::Mat &R12, const cv::Mat &t12, const float th)
+//通过sim3 变换，确定pkf1 的特征点在pkf2中的大致区域，同理
+//确定pkf2 的特征点在pkf1 中的大致区域
+//在该区域通过描述子进行匹配捕获pkf1和pkf2 之前漏匹配的特征点，
+//更新匹配对
+int ORBmatcher::SearchBySim3(KeyFrame *pKF1, 				//f1 帧
+								KeyFrame *pKF2, 				//f2 帧
+								vector<MapPoint*> &vpMatches12,  //需要匹配的地图点
+                             	const float &s12, 				//sim3 s  比例系数
+                             	const cv::Mat &R12, 			//f2-->f1 的旋转矩阵
+                             	const cv::Mat &t12, 			//f2-->f1 的平移矩阵
+                             	const float th)					//阈值 7.5
 {
+	//获取摄像头内参
     const float &fx = pKF1->fx;
     const float &fy = pKF1->fy;
     const float &cx = pKF1->cx;
     const float &cy = pKF1->cy;
 
     // Camera 1 from world
+    //获取f1 相机的R 矩阵
     cv::Mat R1w = pKF1->GetRotation();
+	//获取f1 相机的t 矩阵
     cv::Mat t1w = pKF1->GetTranslation();
 
     //Camera 2 from world
+    //获取f2 相机的R 矩阵
     cv::Mat R2w = pKF2->GetRotation();
+	//获取f2 相机的t 矩阵
     cv::Mat t2w = pKF2->GetTranslation();
 
     //Transformation between cameras
+    //[sR  t]
+    //计算sR
     cv::Mat sR12 = s12*R12;
+	//计算从f1-->f2  的旋转矩阵
     cv::Mat sR21 = (1.0/s12)*R12.t();
+	//计算从f1-->f2 的平移矩阵
     cv::Mat t21 = -sR21*t12;
 
+	//获取f1 特征点关联的地图点
     const vector<MapPoint*> vpMapPoints1 = pKF1->GetMapPointMatches();
+	//获取个数其实是f1 特征点的个数
     const int N1 = vpMapPoints1.size();
 
+	//获取f2 特征点关联的地图点
     const vector<MapPoint*> vpMapPoints2 = pKF2->GetMapPointMatches();
+	//获取个数其实是f2 特征点的个数
     const int N2 = vpMapPoints2.size();
 
     vector<bool> vbAlreadyMatched1(N1,false);
     vector<bool> vbAlreadyMatched2(N2,false);
 
+	//遍历f1 的所有地图点
     for(int i=0; i<N1; i++)
     {
+    	//获取地图点
         MapPoint* pMP = vpMatches12[i];
         if(pMP)
         {
+        	//成功获取地图点设置已经匹配标志
             vbAlreadyMatched1[i]=true;
+			//获取该地图点在f2 中特征点的idx
             int idx2 = pMP->GetIndexInKeyFrame(pKF2);
+			//该地图点跟f2 也对上了，设置f2 匹配标志
             if(idx2>=0 && idx2<N2)
                 vbAlreadyMatched2[idx2]=true;
         }
@@ -1432,24 +1459,33 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
     vector<int> vnMatch2(N2,-1);
 
     // Transform from KF1 to KF2 and search
+    //把f1的地图点转换到f2 上，进行搜索
     for(int i1=0; i1<N1; i1++)
     {
+    	//获取地图点
         MapPoint* pMP = vpMapPoints1[i1];
 
+		//如果已经匹配跳过
         if(!pMP || vbAlreadyMatched1[i1])
             continue;
 
         if(pMP->isBad())
             continue;
 
+		//获取地图点的世界坐标系
         cv::Mat p3Dw = pMP->GetWorldPos();
+		//把f1 地图点的坐标系从世界坐标转换到f1 相机坐标
         cv::Mat p3Dc1 = R1w*p3Dw + t1w;
+		//通过sim3 计算出的相机直接的旋转和平移矩阵
+		//把f1 相机坐标系下的点转换到f2 相机坐标系下
         cv::Mat p3Dc2 = sR21*p3Dc1 + t21;
 
         // Depth must be positive
+        //地图点深度不能小于0
         if(p3Dc2.at<float>(2)<0.0)
             continue;
 
+		//通过相机坐标系下的地图点计算相机平面的像素坐标
         const float invz = 1.0/p3Dc2.at<float>(2);
         const float x = p3Dc2.at<float>(0)*invz;
         const float y = p3Dc2.at<float>(1)*invz;
@@ -1458,46 +1494,62 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
         const float v = fy*y+cy;
 
         // Point must be inside the image
+        //检查是否在f2 图像有效像素内
         if(!pKF2->IsInImage(u,v))
             continue;
 
+		//获取该地图点的距离范围
         const float maxDistance = pMP->GetMaxDistanceInvariance();
         const float minDistance = pMP->GetMinDistanceInvariance();
+		//计算该地图点的模
         const float dist3D = cv::norm(p3Dc2);
 
         // Depth must be inside the scale invariance region
+        //地图点的距离是否在范围内
         if(dist3D<minDistance || dist3D>maxDistance )
             continue;
 
         // Compute predicted octave
+        //通过距离计算该地图点在f2 上可能的金字塔层
         const int nPredictedLevel = pMP->PredictScale(dist3D,pKF2);
 
         // Search in a radius
+        //计算搜索半径阈值
         const float radius = th*pKF2->mvScaleFactors[nPredictedLevel];
 
+		//在f2 上该阈值内搜索所有的特征点
         const vector<size_t> vIndices = pKF2->GetFeaturesInArea(u,v,radius);
 
+		//没有找到一个特征点
         if(vIndices.empty())
             continue;
 
         // Match to the most similar keypoint in the radius
+        //获取该地图点的描述子
         const cv::Mat dMP = pMP->GetDescriptor();
 
         int bestDist = INT_MAX;
         int bestIdx = -1;
+		//遍历在f2 上搜索到的所有特征点
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
         {
+        	//获取特征点的idex
             const size_t idx = *vit;
 
+			//获取特征点坐标
             const cv::KeyPoint &kp = pKF2->mvKeysUn[idx];
 
+			//计算特征点所在的金字塔层是否在预估的层或下一层上
             if(kp.octave<nPredictedLevel-1 || kp.octave>nPredictedLevel)
                 continue;
 
+			//获取该特征点的描述子
             const cv::Mat &dKF = pKF2->mDescriptors.row(idx);
 
+			//计算特征点的和地图点的汉明距离
             const int dist = DescriptorDistance(dMP,dKF);
 
+			//获取汉明距离最小的点和其距离
             if(dist<bestDist)
             {
                 bestDist = dist;
@@ -1505,31 +1557,41 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
             }
         }
 
+		//距离小于100
         if(bestDist<=TH_HIGH)
         {
+        	//匹配成功，记录匹配到的idx
             vnMatch1[i1]=bestIdx;
         }
     }
 
-    // Transform from KF2 to KF2 and search
+    // Transform from KF2 to KF1 and search
+    //把f2 的地图点转换到f1 上，进行匹配搜索
     for(int i2=0; i2<N2; i2++)
     {
+    	//获取f2 的地图点
         MapPoint* pMP = vpMapPoints2[i2];
 
+		//如果地图点不存在或者已经匹配，则跳过
         if(!pMP || vbAlreadyMatched2[i2])
             continue;
 
+		//如果地图点是坏点则跳过
         if(pMP->isBad())
             continue;
-
+		//获取地图点的世界坐标3D
         cv::Mat p3Dw = pMP->GetWorldPos();
+		//把地图点世界坐标3D 点转换到f2 相机坐标下的3D  点
         cv::Mat p3Dc2 = R2w*p3Dw + t2w;
+		//通过sim3 变化，把f2 相机坐标下的3D 点转换到f1 相机坐标下的3D 点
         cv::Mat p3Dc1 = sR12*p3Dc2 + t12;
 
         // Depth must be positive
+        //深度必须大于0
         if(p3Dc1.at<float>(2)<0.0)
             continue;
 
+		//通过f1相机坐标下的3D 点求f1 相机平面对应的像素点
         const float invz = 1.0/p3Dc1.at<float>(2);
         const float x = p3Dc1.at<float>(0)*invz;
         const float y = p3Dc1.at<float>(1)*invz;
@@ -1538,46 +1600,62 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
         const float v = fy*y+cy;
 
         // Point must be inside the image
+        //检查所求像素点是否在f1 相机的有效像素点内
         if(!pKF1->IsInImage(u,v))
             continue;
 
+		//获取地图坐标的深度范围
         const float maxDistance = pMP->GetMaxDistanceInvariance();
         const float minDistance = pMP->GetMinDistanceInvariance();
+		//获取该地图点在f1 相机坐标下的距离
         const float dist3D = cv::norm(p3Dc1);
 
         // Depth must be inside the scale pyramid of the image
+        //距离在范围外则跳过
         if(dist3D<minDistance || dist3D>maxDistance)
             continue;
 
         // Compute predicted octave
+        //估计该点应该在f1 金字塔的层数
         const int nPredictedLevel = pMP->PredictScale(dist3D,pKF1);
 
         // Search in a radius of 2.5*sigma(ScaleLevel)
+        //计算搜索半径
         const float radius = th*pKF1->mvScaleFactors[nPredictedLevel];
 
+		//f1 该指定区域内搜索所有的特征点
         const vector<size_t> vIndices = pKF1->GetFeaturesInArea(u,v,radius);
 
+		//搜索到的特征点为0 ，跳过
         if(vIndices.empty())
             continue;
 
         // Match to the most similar keypoint in the radius
+        //获取地图点的描述子
         const cv::Mat dMP = pMP->GetDescriptor();
 
         int bestDist = INT_MAX;
         int bestIdx = -1;
+		//遍历搜索到的所有特征点
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
         {
+        	//获取特征点的idx
             const size_t idx = *vit;
 
+			//获取特征点的坐标
             const cv::KeyPoint &kp = pKF1->mvKeysUn[idx];
 
+			//特征点的金字塔层是否在预估的层后下一层上
             if(kp.octave<nPredictedLevel-1 || kp.octave>nPredictedLevel)
                 continue;
 
+			//获取该特征点的描述子
             const cv::Mat &dKF = pKF1->mDescriptors.row(idx);
 
+			//计算地图点和该特征点的描述子的汉明距离
             const int dist = DescriptorDistance(dMP,dKF);
 
+			//找到f1 上与该地图点汉明距离最小的特征点
             if(dist<bestDist)
             {
                 bestDist = dist;
@@ -1585,6 +1663,7 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
             }
         }
 
+		//如果距离小于100, 匹配成功
         if(bestDist<=TH_HIGH)
         {
             vnMatch2[i2]=bestIdx;
@@ -1594,16 +1673,23 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
     // Check agreement
     int nFound = 0;
 
+	//遍历匹配结果，如果f1 和f2 匹配结果都相同的点，才算匹配成功
     for(int i1=0; i1<N1; i1++)
     {
+    	//获取f1 的特征点关联的 地图点匹配到的f2 的特征点
         int idx2 = vnMatch1[i1];
 
+		//匹配特征点存在
         if(idx2>=0)
         {
+        	//获取f2 对应的特征点在f1 上匹配到的地图点关联的特征点
             int idx1 = vnMatch2[idx2];
+			//二者是否相等，相等表示你匹配到了我，我也匹配到了你
             if(idx1==i1)
             {
+            	//把匹配到的地图点进行关联
                 vpMatches12[i1] = vpMapPoints2[idx2];
+				//匹配到的个数加1
                 nFound++;
             }
         }
