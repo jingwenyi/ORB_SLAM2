@@ -106,7 +106,9 @@ public:
     // Variables used by loop closing
     //针对哪个帧的闭环 地图点
     long unsigned int mnLoopPointForKF;
+	//地图点已经被修正标志
     long unsigned int mnCorrectedByKF;
+	//地图点的修正参考帧
     long unsigned int mnCorrectedReference;    
     cv::Mat mPosGBA;
     long unsigned int mnBAGlobalForKF;

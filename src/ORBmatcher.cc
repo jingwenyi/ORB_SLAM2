@@ -1260,48 +1260,69 @@ int ORBmatcher::Fuse(KeyFrame *pKF,  //关键帧
 
     return nFused;
 }
-
-int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoints, float th, vector<MapPoint *> &vpReplacePoint)
+//投影地图点到关键帧中，并判断是否有重复的地图点
+int ORBmatcher::Fuse(KeyFrame *pKF, 							//关键帧
+						cv::Mat Scw,							//世界坐标系到关键帧机体坐标系的sim3 变换 
+						const vector<MapPoint *> &vpPoints, 	//需要投影的地图点
+						float th, 								//阈值, 搜索半径4
+						vector<MapPoint *> &vpReplacePoint)		//返回需要替换的地图点
 {
     // Get Calibration Parameters for later projection
+    //相机内参
     const float &fx = pKF->fx;
     const float &fy = pKF->fy;
     const float &cx = pKF->cx;
     const float &cy = pKF->cy;
 
     // Decompose Scw
+    //将sim3 转换为se3 分解
+    //[sR  t; 0  1]
+    //获取sR
     cv::Mat sRcw = Scw.rowRange(0,3).colRange(0,3);
+	//求s
     const float scw = sqrt(sRcw.row(0).dot(sRcw.row(0)));
+	//求R
     cv::Mat Rcw = sRcw/scw;
+	//求t
     cv::Mat tcw = Scw.rowRange(0,3).col(3)/scw;
+	//求该帧的位姿
     cv::Mat Ow = -Rcw.t()*tcw;
 
     // Set of MapPoints already found in the KeyFrame
+    //获取当前帧的地图点
     const set<MapPoint*> spAlreadyFound = pKF->GetMapPoints();
 
     int nFused=0;
 
+	//获取需要投影点的个数
     const int nPoints = vpPoints.size();
 
     // For each candidate MapPoint project and match
+    //遍历每一个地图点
     for(int iMP=0; iMP<nPoints; iMP++)
     {
+    	//获取地图点
         MapPoint* pMP = vpPoints[iMP];
 
         // Discard Bad MapPoints and already found
+        //地图点有问题，已经找到对应的地图点，跳过
         if(pMP->isBad() || spAlreadyFound.count(pMP))
             continue;
 
         // Get 3D Coords.
+        //获取地图点的世界坐标3d 点
         cv::Mat p3Dw = pMP->GetWorldPos();
 
         // Transform into Camera Coords.
+        //把地图点坐标投影到摄像头坐标系下
         cv::Mat p3Dc = Rcw*p3Dw+tcw;
 
         // Depth must be positive
+        //深度检查
         if(p3Dc.at<float>(2)<0.0f)
             continue;
 
+		//通过坐标系下的3D  点求像素坐标
         // Project into Image
         const float invz = 1.0/p3Dc.at<float>(2);
         const float x = p3Dc.at<float>(0)*invz;
@@ -1311,53 +1332,72 @@ int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoi
         const float v = fy*y+cy;
 
         // Point must be inside the image
+        //判断像素点是否在图像坐标中
         if(!pKF->IsInImage(u,v))
             continue;
 
         // Depth must be inside the scale pyramid of the image
+        //获取地图点的距离范围
         const float maxDistance = pMP->GetMaxDistanceInvariance();
         const float minDistance = pMP->GetMinDistanceInvariance();
+		//地图点到相机中心的坐标向量
         cv::Mat PO = p3Dw-Ow;
+		//求向量的模
         const float dist3D = cv::norm(PO);
 
+		//地图点到相机中心的距离是否在有效距离内
         if(dist3D<minDistance || dist3D>maxDistance)
             continue;
 
         // Viewing angle must be less than 60 deg
+        //获取地图点的平均观测方向
         cv::Mat Pn = pMP->GetNormal();
 
+		//cos(a,b) = a.b/(|a||b|), |Pn| = 1
         if(PO.dot(Pn)<0.5*dist3D)
             continue;
 
         // Compute predicted scale level
+        //通过距离预测该地图点在该帧的那一个金字塔层上
         const int nPredictedLevel = pMP->PredictScale(dist3D,pKF);
 
         // Search in a radius
+        //计算搜索范围
         const float radius = th*pKF->mvScaleFactors[nPredictedLevel];
 
+		//搜索该帧指定范围内的所有特征点
         const vector<size_t> vIndices = pKF->GetFeaturesInArea(u,v,radius);
 
+		//搜索到的特征点为空，直接跳过
         if(vIndices.empty())
             continue;
 
         // Match to the most similar keypoint in the radius
 
+		//获取地图点的描述子
         const cv::Mat dMP = pMP->GetDescriptor();
 
         int bestDist = INT_MAX;
         int bestIdx = -1;
+		//遍历搜索到的所有特征点
         for(vector<size_t>::const_iterator vit=vIndices.begin(); vit!=vIndices.end(); vit++)
         {
+        	//获取特征点的idx
             const size_t idx = *vit;
+			//获取特征点的金字塔层
             const int &kpLevel = pKF->mvKeysUn[idx].octave;
 
+			//金字塔层是否满足预计的层或者预计的下一层
             if(kpLevel<nPredictedLevel-1 || kpLevel>nPredictedLevel)
                 continue;
 
+			//获取特征点的描述子
             const cv::Mat &dKF = pKF->mDescriptors.row(idx);
 
+			//计算描述子的汉明距离
             int dist = DescriptorDistance(dMP,dKF);
 
+			//找到汉明距离最小的特征点
             if(dist<bestDist)
             {
                 bestDist = dist;
@@ -1366,17 +1406,24 @@ int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoi
         }
 
         // If there is already a MapPoint replace otherwise add new measurement
+        //最小汉明距离是否小于50
         if(bestDist<=TH_LOW)
         {
+        	//获取该特征点的地图点
             MapPoint* pMPinKF = pKF->GetMapPoint(bestIdx);
             if(pMPinKF)
             {
+            	//如果该特征点有地图点
                 if(!pMPinKF->isBad())
+					//标记为需要替换的地图点
                     vpReplacePoint[iMP] = pMPinKF;
             }
             else
             {
+            	//如果该特征点没有地图点
+            	//对地图添加添加观测帧个对应的特征点
                 pMP->AddObservation(pKF,bestIdx);
+				//给关键帧添加地图点
                 pKF->AddMapPoint(pMP,bestIdx);
             }
             nFused++;

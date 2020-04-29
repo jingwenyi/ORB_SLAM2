@@ -883,62 +883,92 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF,		//¹Ø¼üÖ¡
         pMP->UpdateNormalAndDepth();
     }
 }
-
-
-void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* pCurKF,
-                                       const LoopClosing::KeyFrameAndPose &NonCorrectedSim3,
-                                       const LoopClosing::KeyFrameAndPose &CorrectedSim3,
-                                       const map<KeyFrame *, set<KeyFrame *> > &LoopConnections, const bool &bFixScale)
+//È«¾ÖµØÍ¼ÓÅ»¯
+//±Õ»·¼ì²âºó£¬Î»×ËÓÅ»¯
+void Optimizer::OptimizeEssentialGraph(Map* pMap, 					//È«¾ÖµØÍ¼
+											KeyFrame* pLoopKF, 			//±Õ»·Æ¥ÅäÉÏµÄ¹Ø¼üÖ¡
+											KeyFrame* pCurKF,			//µ±Ç°¹Ø¼üÖ¡
+                                       		const LoopClosing::KeyFrameAndPose &NonCorrectedSim3,  //Î´¾­¹ısim3 ´«²¥µ÷Õû¹ıµÄ¹Ø¼üÖ¡Î»×Ë
+                                       		const LoopClosing::KeyFrameAndPose &CorrectedSim3,     //¾­¹ısim3 ´«²¥µ÷Õû¹ıµÄ¹Ø¼üÖ¡Î»×Ë
+                                       		const map<KeyFrame *, set<KeyFrame *> > &LoopConnections, //Òò±Õ»·Ê±µØÍ¼µãµ÷Õû¶øÉú²úµÄ±ß
+                                       		const bool &bFixScale)				//ÓÅ»¯Ëã·¨Ñ¡Ôñ
 {
     // Setup optimizer
+    //¹¹ÔìÓÅ»¯Æ÷
     g2o::SparseOptimizer optimizer;
     optimizer.setVerbose(false);
+	//Ö¸¶¨ÏßĞÔ·½³ÌÇó½âÆ÷
     g2o::BlockSolver_7_3::LinearSolverType * linearSolver =
            new g2o::LinearSolverEigen<g2o::BlockSolver_7_3::PoseMatrixType>();
+	//¹¹ÔìÏßĞÔÇó½âÆ÷
     g2o::BlockSolver_7_3 * solver_ptr= new g2o::BlockSolver_7_3(linearSolver);
+	//Ê¹ÓÃLM Ëã·¨½øĞĞ·ÇÏßĞÔµü´ú
     g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
 
     solver->setUserLambdaInit(1e-16);
     optimizer.setAlgorithm(solver);
 
+	//»ñÈ¡µØÍ¼µÄËùÓĞ¹Ø¼üÖ¡
     const vector<KeyFrame*> vpKFs = pMap->GetAllKeyFrames();
+	//»ñÈ¡µØÍ¼µÄËùÓĞµØÍ¼µã
     const vector<MapPoint*> vpMPs = pMap->GetAllMapPoints();
 
+	//»ñÈ¡µØÍ¼×î´óµÄ¹Ø¼üÖ¡id
     const unsigned int nMaxKFid = pMap->GetMaxKFid();
 
+	//½ö¾­¹ısim3 ´«²¥µ÷Õû£¬Î´¾­¹ıÓÅ»¯µÄ¹Ø¼üÖ¡Î»×Ë
     vector<g2o::Sim3,Eigen::aligned_allocator<g2o::Sim3> > vScw(nMaxKFid+1);
+	//¾­¹ısim3 ´«²¥µ÷Õû£¬¾­¹ıÓÅ»¯µÄ¹Ø¼üÖ¡Î»×Ë
     vector<g2o::Sim3,Eigen::aligned_allocator<g2o::Sim3> > vCorrectedSwc(nMaxKFid+1);
+	
     vector<g2o::VertexSim3Expmap*> vpVertices(nMaxKFid+1);
 
     const int minFeat = 100;
 
     // Set KeyFrame vertices
+    //½«µØÍ¼ÖĞËùÓĞ¹Ø¼üÖ¡µÄÎ»×Ë×÷Îª¶¥µãÌí¼Óµ½ÓÅ»¯Æ÷
+    //¾¡¿ÉÄÜÊ¹ÓÃµÄsim3 µ÷ÕûµÄÎ»×Ë
+    //Îªsim3 ¹¹Ôì¶¥µã£¬Ìí¼Ó¶¥µã
     for(size_t i=0, iend=vpKFs.size(); i<iend;i++)
     {
+    	//»ñÈ¡¹Ø¼üÖ¡
         KeyFrame* pKF = vpKFs[i];
         if(pKF->isBad())
             continue;
+		//ÕâÀïĞèÒª¼ì²éÔÚg2o Ê¹ÓÃÍêºóÓĞÃ»ÓĞÊÍ·Å¶ÔÏó£¬±ÜÃâÒ²ÄÚ´æĞ¹Â©
         g2o::VertexSim3Expmap* VSim3 = new g2o::VertexSim3Expmap();
 
+		//»ñÈ¡¸Ã¹Ø¼üÖ¡µÄid
         const int nIDi = pKF->mnId;
 
+		//ÔÚ¾­¹ısim3 ´«²¥µ÷Õû¹ıµÄ×ËÌ¬ÖĞ²éÕÒÊÇ·ñÓĞ¸Ã¹Ø¼üÖ¡
         LoopClosing::KeyFrameAndPose::const_iterator it = CorrectedSim3.find(pKF);
 
+		//Èç¹û¸Ã¹Ø¼üÖ¡ÔÚ±Õ»·ÊÇÍ¨¹ısim3 ´«²¥µ÷Õû£¬ÓÃĞ£ÕıºóµÄÎ»×Ë
         if(it!=CorrectedSim3.end())
         {
+        	//»ñÈ¡Ğ£ÕıºóµÄÎ»×Ë
             vScw[nIDi] = it->second;
+			//²åÈëµ½g2o Î»×ËÓÅ»¯ÖĞ
             VSim3->setEstimate(it->second);
         }
         else
-        {
+        {//Èç¹û¸Ã¹Ø¼üÖ¡ÔÚ±Õ»·Ê±Ã»ÓĞÍ¨¹ısim3 ´«²¥µ÷Õû£¬ÓÃ×ÔÉíµÄÎ»×Ë
+        	//»ñÈ¡¹Ø¼üÖ¡µÄR  ¾ØÕó²¢×ª»»Îªsim3 Ê¹ÓÃµÄ¾ØÕó
             Eigen::Matrix<double,3,3> Rcw = Converter::toMatrix3d(pKF->GetRotation());
+			//»ñÈ¡¹Ø¼üÖ¡µÄt ¾ØÕó²¢×ª»»Îªsim3 Ê¹ÓÃµÄ¾ØÕó
             Eigen::Matrix<double,3,1> tcw = Converter::toVector3d(pKF->GetTranslation());
+			//¼ÆËãsim3 ¾ØÕó
             g2o::Sim3 Siw(Rcw,tcw,1.0);
+			//±£´æµ½Î´¾­¹ısim3 ´¦ÀíµÄÎ»×ËÏòÁ¿ÖĞ
             vScw[nIDi] = Siw;
+			//²åÈëµ½g2o Î»×ËÓÅ»¯ÖĞ
             VSim3->setEstimate(Siw);
         }
 
+		//±Õ»·Æ¥ÅäÉÏµÄÖ¡£¬²»½øĞĞÎ»×ËÓÅ»¯
         if(pKF==pLoopKF)
+			//ÉèÖÃÎª¹Ì¶¨µã£¬²»ÓÅ»¯
             VSim3->setFixed(true);
 
         VSim3->setId(nIDi);
@@ -947,6 +977,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
 
         optimizer.addVertex(VSim3);
 
+		//ÓÅ»¯Ç°µÄÎ»×Ë¶¥µã£¬ºóÃæ´úÂëÃ»ÓĞÓÃ£¬ÊÇ²»ÊÇÍü¼ÇÔÚ×îºóÊÍ·ÅÁË
         vpVertices[nIDi]=VSim3;
     }
 
@@ -956,26 +987,42 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
     const Eigen::Matrix<double,7,7> matLambda = Eigen::Matrix<double,7,7>::Identity();
 
     // Set Loop edges
-    for(map<KeyFrame *, set<KeyFrame *> >::const_iterator mit = LoopConnections.begin(), mend=LoopConnections.end(); mit!=mend; mit++)
+    //Ìí¼Ó±ß£¬LoopConnections ÊÇ±Õ»·Ê±ÒòÎªµØÍ¼µãµ÷Õû¶ø³öÏÖµÄĞÂ¹Ø¼üÖ¡Á¬½Ó¹ØÏµ£¬²»ÊÇµ±Ç°Ö¡Óë±Õ»·Æ¥ÅäÖ¡Ö±½ÓµÄÁ¬½Ó¹ØÏµ
+	//±éÀú±Õ»·¼ì²âÊÇ³öÏÖµÄĞÂ¹Ø¼üÖ¡Á¬½Ó¹ØÏµ
+	for(map<KeyFrame *, set<KeyFrame *> >::const_iterator mit = LoopConnections.begin(), mend=LoopConnections.end(); mit!=mend; mit++)
     {
+    	//»ñÈ¡¹Ø¼üÖ¡
         KeyFrame* pKF = mit->first;
+		//»ñÈ¡¹Ø¼üÖ¡id
         const long unsigned int nIDi = pKF->mnId;
+		//»ñÈ¡¹Ø¼üÖ¡ĞÂµÄÁ¬½Ó¹ØÏµ
         const set<KeyFrame*> &spConnections = mit->second;
+
+		//»ñÈ¡¹Ø¼üÖ¡Ã»ÓĞÍ¨¹ısim3 ÓÅ»¯µÄÎ»×Ë
         const g2o::Sim3 Siw = vScw[nIDi];
         const g2o::Sim3 Swi = Siw.inverse();
 
+		//»ñÈ¡¸ÃÖ¡µÄµÄĞÂÁ¬½ÓµÄ¹Ø¼üÖ¡¼¯ºÏ
         for(set<KeyFrame*>::const_iterator sit=spConnections.begin(), send=spConnections.end(); sit!=send; sit++)
         {
+        	//»ñÈ¡¹Ø¼üÖ¡µÄid
             const long unsigned int nIDj = (*sit)->mnId;
+			//¸ÃÖ¡ÒªÊÇµ±Ç°Ö¡»òÕß±Õ»·Æ¥Åäµ½µÄ¹Ø¼üÖ¡£¬Í¬Ê±Âú×ãÓÚÉÏÒ»¼¶¹Ø¼üÖ¡Á¬½ÓÈ¨ÖØ´óÓÚ100
             if((nIDi!=pCurKF->mnId || nIDj!=pLoopKF->mnId) && pKF->GetWeight(*sit)<minFeat)
                 continue;
-
+			//»ñÈ¡¹Ø¼üÖ¡Ã»ÓĞÍ¨¹ısim3 ÓÅ»¯µÄÎ»×Ë
             const g2o::Sim3 Sjw = vScw[nIDj];
+			//µÃµ½Á½¸öpose ¼äµÄsim3 ±ä»»
             const g2o::Sim3 Sji = Sjw * Swi;
 
+			//´´½¨±ßµÄg2o ¶ÔÏó
             g2o::EdgeSim3* e = new g2o::EdgeSim3();
+			//Ìí¼ÓÒªÓÅ»¯µÄ¶¥µã
             e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nIDj)));
             e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nIDi)));
+			//Îâ²©¾õµÃÕâÀïÃ»ÓĞÓÅ»¯Ğ§¹û£¬¸ù¾İÁ½¸öpose ¶¥µãµÄÎ»×ËËã³öÏà¶ÔÎ»×Ë×÷Îª±ß£¬ÄÇ»¹´æÔÚÎó²î?
+			//ÒòÎª±Õ»·µØÍ¼µãµ÷ÕûĞÂĞÎ³ÉµÄ±ß²»ÓÅ»¯£ ÓÅ»¯ÓĞÓÃ?
+			//Ìí¼Ó Á½¸öÎ»×ËµÄsim3 ±ä»»
             e->setMeasurement(Sji);
 
             e->information() = matLambda;
@@ -987,14 +1034,19 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
     }
 
     // Set normal edges
+    //Ìí¼Ó¸ú×ÙÊ±ĞÎ³ÉµÄ±ß£¬±Õ»·Æ¥Åä³É¹¦ĞÎ³ÉµÄ±ß
+    //±éÀúµØÍ¼ËùÓĞµÄÖ¡
     for(size_t i=0, iend=vpKFs.size(); i<iend; i++)
     {
+    	//»ñÈ¡¹Ø¼üÖ¡
         KeyFrame* pKF = vpKFs[i];
 
+		//»ñÈ¡¸Ã¹Ø¼üÖ¡µÄid
         const int nIDi = pKF->mnId;
 
         g2o::Sim3 Swi;
 
+		//ÔÚÎ´¾­¹ısim3 µ÷Õû¹ıµÄ¹Ø¼üÖ¡Î»ÖÃÀïÃæ²éÕÒÊÇ·ñÓĞ¸ÃÖ¡
         LoopClosing::KeyFrameAndPose::const_iterator iti = NonCorrectedSim3.find(pKF);
 
         if(iti!=NonCorrectedSim3.end())
@@ -1002,6 +1054,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         else
             Swi = vScw[nIDi].inverse();
 
+		//»ñÈ¡¸ÃÖ¡µÄ¸¸¹Ø¼üÖ¡
         KeyFrame* pParentKF = pKF->GetParent();
 
         // Spanning tree edge
@@ -1011,16 +1064,23 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
 
             g2o::Sim3 Sjw;
 
+			//ÔÚÎ´¾­¹ısim3 µ÷Õû¹ıµÄ¹Ø¼üÖ¡Î»ÖÃÀïÃæ²éÕÒÊÇ·ñÓĞ¸ÃÖ¡
             LoopClosing::KeyFrameAndPose::const_iterator itj = NonCorrectedSim3.find(pParentKF);
 
+			//Èç¹û²éÕÒµ½
             if(itj!=NonCorrectedSim3.end())
+				//»ñÈ¡Î´¾­¹ısim3 ´«²¥µ÷ÕûµÄÎ»×Ë
                 Sjw = itj->second;
             else
+				//
                 Sjw = vScw[nIDj];
 
+			//µÃµ½Á½¸öpose Ö®¼äµÄsim3 ±ä»»
             g2o::Sim3 Sji = Sjw * Swi;
 
+			//´´½¨±ßµÄg2o ¶ÔÏó
             g2o::EdgeSim3* e = new g2o::EdgeSim3();
+			//Ìí¼ÓÒªÓÅ»¯µÄ¶¥µã
             e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nIDj)));
             e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nIDi)));
             e->setMeasurement(Sji);
@@ -1030,25 +1090,34 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         }
 
         // Loop edges
+        //»ñÈ¡¸ÃÖ¡Óë±Õ»·Á¬½ÓµÄ±ß
         const set<KeyFrame*> sLoopEdges = pKF->GetLoopEdges();
+		//±éÀú¸ÃÖ¡Óë±Õ»·Á¬½ÓµÄ±ß
         for(set<KeyFrame*>::const_iterator sit=sLoopEdges.begin(), send=sLoopEdges.end(); sit!=send; sit++)
         {
+        	//»ñÈ¡¶ÔÓ¦µÄ¹Ø¼üÖ¡
             KeyFrame* pLKF = *sit;
+			//ÅĞ¶ÏÊÇ·ñÊÇÖ®Ç°µÄ±ß
             if(pLKF->mnId<pKF->mnId)
             {
                 g2o::Sim3 Slw;
 
                 LoopClosing::KeyFrameAndPose::const_iterator itl = NonCorrectedSim3.find(pLKF);
 
+				//¾¡¿ÉÄÜµÃµ½Î´¾­¹ısim3 ´«²¥µÄÎ»×Ë
                 if(itl!=NonCorrectedSim3.end())
                     Slw = itl->second;
                 else
                     Slw = vScw[pLKF->mnId];
 
+				//¼ÆËãÁ½¸öpose  Ö®¼äµÄÎ»×Ë
                 g2o::Sim3 Sli = Slw * Swi;
+				//¹¹ÔìÒ»¸ö±ßµÄg2o ¶ÔÏó
                 g2o::EdgeSim3* el = new g2o::EdgeSim3();
+				//Ìí¼Ó±ßµÄ¶¥µã
                 el->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(pLKF->mnId)));
                 el->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nIDi)));
+				//
                 el->setMeasurement(Sli);
                 el->information() = matLambda;
                 optimizer.addEdge(el);
@@ -1056,12 +1125,22 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         }
 
         // Covisibility graph edges
+        //°ÑÓĞºÜºÃ¹²ÊÓ¹ØÏµµÄ¹Ø¼üÖ¡Ò²×÷Îª±ß½øĞĞÓÅ»¯
+        //Ê¹ÓÃ¾­¹ısim3 µ÷ÕûÇ°¹Ø¼üÖ¡Ö®¼äµÄÏà¶Ô¹ØÏµ×÷Îª±ß
         const vector<KeyFrame*> vpConnectedKFs = pKF->GetCovisiblesByWeight(minFeat);
+		//±éÀúµ±Ç°Ö¡µÄ¹²ÊÓÖ¡
         for(vector<KeyFrame*>::const_iterator vit=vpConnectedKFs.begin(); vit!=vpConnectedKFs.end(); vit++)
         {
+        	//»ñÈ¡¹²ÊÓÖ¡
             KeyFrame* pKFn = *vit;
+			//Âú×ãÌõ¼ş:
+			//1.¸ÃÖ¡OK
+			//2.¸ÃÖ¡²»ÊÇ¸Ã±Õ»·¹Ø¼üÖ¡µÄ¸¸¹Ø¼üÖ¡
+			//3.¸ÃÖ¡²»ÊÇ¸Ã±Õ»·¹Ø¼üÖ¡µÄ×Ó¹Ø¼üÖ¡
+			//4.¸ÃÖ¡²»ÔÚ±Õ»·±ßµÄ¹Ø¼üÖ¡ÖĞ
             if(pKFn && pKFn!=pParentKF && !pKF->hasChild(pKFn) && !sLoopEdges.count(pKFn))
             {
+            	//
                 if(!pKFn->isBad() && pKFn->mnId<pKF->mnId)
                 {
                     if(sInsertedEdges.count(make_pair(min(pKF->mnId,pKFn->mnId),max(pKF->mnId,pKFn->mnId))))
@@ -1090,62 +1169,86 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
     }
 
     // Optimize!
+    //¿ªÊ¼g2o  ÓÅ»¯
     optimizer.initializeOptimization();
     optimizer.optimize(20);
 
     unique_lock<mutex> lock(pMap->mMutexMapUpdate);
 
     // SE3 Pose Recovering. Sim3:[sR t;0 1] -> SE3:[R t/s;0 1]
+    //Éè¶¨ÓÅ»¯ºóµÄÎ»×Ë
+    //±éÀúµØÍ¼ËùÓĞ¹Ø¼üÖ¡
     for(size_t i=0;i<vpKFs.size();i++)
     {
+    	//»ñÈ¡¹Ø¼üÖ¡
         KeyFrame* pKFi = vpKFs[i];
 
+		//»ñÈ¡¹Ø¼üÖ¡µÄid
         const int nIDi = pKFi->mnId;
 
         g2o::VertexSim3Expmap* VSim3 = static_cast<g2o::VertexSim3Expmap*>(optimizer.vertex(nIDi));
+		//»ñÈ¡ÓÅ»¯ºóµÄÎ»×Ë
         g2o::Sim3 CorrectedSiw =  VSim3->estimate();
         vCorrectedSwc[nIDi]=CorrectedSiw.inverse();
+		//R
         Eigen::Matrix3d eigR = CorrectedSiw.rotation().toRotationMatrix();
+		//t
         Eigen::Vector3d eigt = CorrectedSiw.translation();
+		//s
         double s = CorrectedSiw.scale();
 
         eigt *=(1./s); //[R t/s;0 1]
 
+		// R ºÍt ×éºÏ³ÉÎ»×Ë
         cv::Mat Tiw = Converter::toCvSE3(eigR,eigt);
 
+		//Éè¼ÆĞŞÕıºóµÄÎ»×Ë
         pKFi->SetPose(Tiw);
     }
 
     // Correct points. Transform to "non-optimized" reference keyframe pose and transform back with optimized pose
+    //µ÷ÕûµØÍ¼µãµÄÎ»×Ë
+    //±éÀúµØÍ¼µÄËùÓĞµØÍ¼µã 
     for(size_t i=0, iend=vpMPs.size(); i<iend; i++)
     {
+    	//»ñÈ¡µØÍ¼µã
         MapPoint* pMP = vpMPs[i];
 
         if(pMP->isBad())
             continue;
 
         int nIDr;
+		//¸ÃµØÍ¼µã¾­¹ısim3 µ÷Ö¡¹ı
         if(pMP->mnCorrectedByKF==pCurKF->mnId)
         {
+        	//»ñÈ¡µØÍ¼µãµÄĞŞÕı²Î¿¼Ö¡id
             nIDr = pMP->mnCorrectedReference;
         }
         else
         {
+        	//»ñµÃµØÍ¼µãµÄ²Î¿¼¹Ø¼üÖ¡£¬Ò»°ãÎª´´½¨¸ÃµØÍ¼µãµÄ¹Ø¼üÖ¡
             KeyFrame* pRefKF = pMP->GetReferenceKeyFrame();
+			//»ñÈ¡²Î¿¼¹Ø¼üÖ¡µÄid
             nIDr = pRefKF->mnId;
         }
 
-
+		//µÃµ½µØÍ¼µã²Î¿¼¹Ø¼üÖ¡ÓÅ»¯Ç°µÄÎ»×Ë
         g2o::Sim3 Srw = vScw[nIDr];
+		//µÃµ½µØÍ¼µã²Î¿¼¹Ø¼üÖ¡ÓÅ»¯ºóµÄÎ»×Ë
         g2o::Sim3 correctedSwr = vCorrectedSwc[nIDr];
 
+		//»ñÈ¡µØÍ¼µã×ø±ê
         cv::Mat P3Dw = pMP->GetWorldPos();
+		//°ÑµØÍ¼µã3D ×ø±ê×ª»»Îªg2o¿ÉÒÔÊ¶±ğµÄ×ø±ê
         Eigen::Matrix<double,3,1> eigP3Dw = Converter::toVector3d(P3Dw);
+		//°ÑµØÍ¼µã×ªµ½sim3 Î´Ğ£×¼µÄ×ø±êÏÂ£¬ÔÚÀûÓÃĞ£×¼µÄ×ø±ê×ª»»µ½ÊÀ½ç×ø±ê
         Eigen::Matrix<double,3,1> eigCorrectedP3Dw = correctedSwr.map(Srw.map(eigP3Dw));
 
+		//ÉèÖÃµØÍ¼µãĞŞÕıºóµÄÎ»×Ë
         cv::Mat cvCorrectedP3Dw = Converter::toCvMat(eigCorrectedP3Dw);
         pMP->SetWorldPos(cvCorrectedP3Dw);
 
+		//¸üĞÂµØÍ¼µãµÄÆ½¾ù¹Û²â·½ÏòºÍ¹Û²âÎ»×Ë
         pMP->UpdateNormalAndDepth();
     }
 }

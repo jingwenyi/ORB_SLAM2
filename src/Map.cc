@@ -83,12 +83,14 @@ int Map::GetLastBigChangeIdx()
     return mnBigChangeIdx;
 }
 
+//获取地图的所有关键帧
 vector<KeyFrame*> Map::GetAllKeyFrames()
 {
     unique_lock<mutex> lock(mMutexMap);
     return vector<KeyFrame*>(mspKeyFrames.begin(),mspKeyFrames.end());
 }
 
+//获取地图点所有地图点
 vector<MapPoint*> Map::GetAllMapPoints()
 {
     unique_lock<mutex> lock(mMutexMap);

@@ -47,6 +47,7 @@ public:
 
 	//连续的组， 关键帧，连续性权重
     typedef pair<set<KeyFrame*>,int> ConsistentGroup;    
+	//std::less 表示从小到排序
     typedef map<KeyFrame*,g2o::Sim3,std::less<KeyFrame*>,
         Eigen::aligned_allocator<std::pair<const KeyFrame*, g2o::Sim3> > > KeyFrameAndPose;
 
@@ -132,6 +133,7 @@ protected:
     std::vector<ConsistentGroup> mvConsistentGroups;
 	//有足够连续性的闭环候选帧
     std::vector<KeyFrame*> mvpEnoughConsistentCandidates;
+	//当前帧所有的关联帧包括自己
     std::vector<KeyFrame*> mvpCurrentConnectedKFs;
 	//当前帧已经匹配成功的地图点
     std::vector<MapPoint*> mvpCurrentMatchedPoints;
@@ -144,10 +146,13 @@ protected:
     long unsigned int mLastLoopKFid;
 
     // Variables related to Global Bundle Adjustment
+    //是否正在运行全局ba
     bool mbRunningGBA;
     bool mbFinishedGBA;
+	//停止全局BA  优化
     bool mbStopGBA;
     std::mutex mMutexGBA;
+	//全局优化的线程
     std::thread* mpThreadGBA;
 
     // Fix scale in the stereo/RGB-D case

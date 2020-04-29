@@ -233,6 +233,7 @@ protected:
     KeyFrame* mpParent;  //当前关键帧对应的父关键帧
     //当前关键帧的子关键帧
     std::set<KeyFrame*> mspChildrens;
+	//该帧与闭环连接的边
     std::set<KeyFrame*> mspLoopEdges;
 
     // Bad flags
