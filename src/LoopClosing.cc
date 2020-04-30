@@ -897,11 +897,13 @@ void LoopClosing::ResetIfRequested()
     }
 }
 
-void LoopClosing::RunGlobalBundleAdjustment(unsigned long nLoopKF)
+//运行全局集束调整
+void LoopClosing::RunGlobalBundleAdjustment(unsigned long nLoopKF)  //当前闭环帧的id
 {
     cout << "Starting Global Bundle Adjustment" << endl;
 
     int idx =  mnFullBAIdx;
+	//全局 ba 调整
     Optimizer::GlobalBundleAdjustemnt(mpMap,10,&mbStopGBA,nLoopKF,false);
 
     // Update all MapPoints and KeyFrames
@@ -913,13 +915,18 @@ void LoopClosing::RunGlobalBundleAdjustment(unsigned long nLoopKF)
         if(idx!=mnFullBAIdx)
             return;
 
+		//局部地图有新的帧加入的时候就可以停止全局优化
+		//如果全局优化没有停止
         if(!mbStopGBA)
         {
+        	//BA 集束调整已经完成
             cout << "Global Bundle Adjustment finished" << endl;
             cout << "Updating map ..." << endl;
+			//请求本地建图停止
             mpLocalMapper->RequestStop();
             // Wait until Local Mapping has effectively stopped
 
+			//等待本地建图停止
             while(!mpLocalMapper->isStopped() && !mpLocalMapper->isFinished())
             {
                 usleep(1000);
@@ -929,70 +936,101 @@ void LoopClosing::RunGlobalBundleAdjustment(unsigned long nLoopKF)
             unique_lock<mutex> lock(mpMap->mMutexMapUpdate);
 
             // Correct keyframes starting at map first keyframe
+            //更正关键帧
             list<KeyFrame*> lpKFtoCheck(mpMap->mvpKeyFrameOrigins.begin(),mpMap->mvpKeyFrameOrigins.end());
 
+			//遍历地图点的关键帧
             while(!lpKFtoCheck.empty())
             {
+            	//从list 的前面取出关键帧
                 KeyFrame* pKF = lpKFtoCheck.front();
+				//获取关键帧的子关键帧
                 const set<KeyFrame*> sChilds = pKF->GetChilds();
+				//获取当前关键帧的位姿
                 cv::Mat Twc = pKF->GetPoseInverse();
+				//遍历所有的子关键帧
                 for(set<KeyFrame*>::const_iterator sit=sChilds.begin();sit!=sChilds.end();sit++)
                 {
+                	//获取子关键帧
                     KeyFrame* pChild = *sit;
+					//防止重复操作
                     if(pChild->mnBAGlobalForKF!=nLoopKF)
                     {
+                    	//子关键帧姿姿对未修正的该帧姿态进行se3 变换
                         cv::Mat Tchildc = pChild->GetPose()*Twc;
+						//再通过修正的变换回来
                         pChild->mTcwGBA = Tchildc*pKF->mTcwGBA;//*Tcorc*pKF->mTcwGBA;
+                        //全局ba  参考帧id
                         pChild->mnBAGlobalForKF=nLoopKF;
 
                     }
+					//把该子关键帧放到链表中
                     lpKFtoCheck.push_back(pChild);
                 }
 
+				//把全局BA 之前的位姿保存在mTcwBefGBA
                 pKF->mTcwBefGBA = pKF->GetPose();
+				//把全局BA 的位子设置成为姿
                 pKF->SetPose(pKF->mTcwGBA);
                 lpKFtoCheck.pop_front();
             }
 
             // Correct MapPoints
+            //修正地图点
+            //获取地图的所有地图点
             const vector<MapPoint*> vpMPs = mpMap->GetAllMapPoints();
 
+			//遍历所以的地图点
             for(size_t i=0; i<vpMPs.size(); i++)
             {
+            	//获取地图点
                 MapPoint* pMP = vpMPs[i];
 
                 if(pMP->isBad())
                     continue;
 
+				//如果全局ba 帧是当前闭环帧
                 if(pMP->mnBAGlobalForKF==nLoopKF)
                 {
                     // If optimized by Global BA, just update
+                    //设置g2o 优化过后的地图坐标
                     pMP->SetWorldPos(pMP->mPosGBA);
                 }
                 else
                 {
+                	//根据关键帧校正进行更新
                     // Update according to the correction of its reference keyframe
+                    //获取地图点的参考关键帧
                     KeyFrame* pRefKF = pMP->GetReferenceKeyFrame();
 
+					//如果该地图点的全局ba 关键帧不是当前闭环帧，跳过
                     if(pRefKF->mnBAGlobalForKF!=nLoopKF)
                         continue;
 
                     // Map to non-corrected camera
+                    //获取校正前的R
                     cv::Mat Rcw = pRefKF->mTcwBefGBA.rowRange(0,3).colRange(0,3);
+					//获取校正前的t
                     cv::Mat tcw = pRefKF->mTcwBefGBA.rowRange(0,3).col(3);
+					//把地图坐标旋转到相机坐标下的3D 点
                     cv::Mat Xc = Rcw*pMP->GetWorldPos()+tcw;
 
                     // Backproject using corrected camera
+                    //获取校正后的相机位姿
                     cv::Mat Twc = pRefKF->GetPoseInverse();
+					//获取校正后的R
                     cv::Mat Rwc = Twc.rowRange(0,3).colRange(0,3);
+					//获取校正后的t
                     cv::Mat twc = Twc.rowRange(0,3).col(3);
 
+					//se3 求地图点再设置地图点
                     pMP->SetWorldPos(Rwc*Xc+twc);
                 }
             }            
 
             mpMap->InformNewBigChange();
 
+			//释放局部建图的资源
             mpLocalMapper->Release();
 
             cout << "Map updated!" << endl;

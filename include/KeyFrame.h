@@ -154,8 +154,11 @@ public:
     float mRelocScore;
 
     // Variables used by loop closing
+    //全局ba 的位姿
     cv::Mat mTcwGBA;
+	//全局ba 之前的位姿
     cv::Mat mTcwBefGBA;
+	//全局ba  参考帧id
     long unsigned int mnBAGlobalForKF;
 
     // Calibration parameters

@@ -764,6 +764,7 @@ void LocalMapping::Release()
         return;
     mbStopped = false;
     mbStopRequested = false;
+	//删除局部建图的所有关键帧
     for(list<KeyFrame*>::iterator lit = mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++)
         delete *lit;
     mlNewKeyFrames.clear();
