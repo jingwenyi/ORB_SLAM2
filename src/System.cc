@@ -391,11 +391,14 @@ void System::SaveTrajectoryTUM(const string &filename)
 }
 
 
+//保存关键帧轨迹
 void System::SaveKeyFrameTrajectoryTUM(const string &filename)
 {
     cout << endl << "Saving keyframe trajectory to " << filename << " ..." << endl;
 
+	//获取地图的所有关键帧
     vector<KeyFrame*> vpKFs = mpMap->GetAllKeyFrames();
+	//根据关键帧的id 进行排序
     sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);
 
     // Transform all keyframes so that the first keyframe is at the origin.
@@ -403,11 +406,15 @@ void System::SaveKeyFrameTrajectoryTUM(const string &filename)
     //cv::Mat Two = vpKFs[0]->GetPoseInverse();
 
     ofstream f;
+	//打开文件
     f.open(filename.c_str());
+	//禁止使用科学计数法表示浮点数
     f << fixed;
 
+	//遍历所有关键帧
     for(size_t i=0; i<vpKFs.size(); i++)
     {
+    	//获取关键帧
         KeyFrame* pKF = vpKFs[i];
 
        // pKF->SetPose(pKF->GetPose()*Two);
@@ -415,14 +422,18 @@ void System::SaveKeyFrameTrajectoryTUM(const string &filename)
         if(pKF->isBad())
             continue;
 
+		//获取关键帧的R 的转置
         cv::Mat R = pKF->GetRotation().t();
+		//把R 转换成四元素
         vector<float> q = Converter::toQuaternion(R);
+		//获取关键帧的平移
         cv::Mat t = pKF->GetCameraCenter();
         f << setprecision(6) << pKF->mTimeStamp << setprecision(7) << " " << t.at<float>(0) << " " << t.at<float>(1) << " " << t.at<float>(2)
           << " " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << endl;
 
     }
 
+	//关闭文件
     f.close();
     cout << endl << "trajectory saved!" << endl;
 }
