@@ -36,7 +36,9 @@ public:
 
     void DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNode &n3, ExtractorNode &n4);
 
+	//该区域的所有特征点
     std::vector<cv::KeyPoint> vKeys;
+	//该区域的四个顶点坐标
     cv::Point2i UL, UR, BL, BR;
     std::list<ExtractorNode>::iterator lit;
     bool bNoMore;
@@ -82,6 +84,7 @@ public:
         return mvInvLevelSigma2;
     }
 
+	//保存图像金字塔8层的图片
     std::vector<cv::Mat> mvImagePyramid;
 
 protected:
@@ -94,11 +97,11 @@ protected:
     void ComputeKeyPointsOld(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);
     std::vector<cv::Point> pattern;
 
-    int nfeatures;
-    double scaleFactor;
+    int nfeatures; //1000
+    double scaleFactor;  //1.2
     int nlevels;
-    int iniThFAST;
-    int minThFAST;
+    int iniThFAST;  //20
+    int minThFAST;	//8
 
     std::vector<int> mnFeaturesPerLevel;
 
