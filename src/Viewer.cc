@@ -53,18 +53,26 @@ Viewer::Viewer(System* pSystem, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer
 
 void Viewer::Run()
 {
+	//这个变量配合setFinish 函数用于指示该函数是否执行完毕
     mbFinished = false;
     mbStopped = false;
 
+	//设置窗口的标题和大小
     pangolin::CreateWindowAndBind("ORB-SLAM2: Map Viewer",1024,768);
 
     // 3D Mouse handler requires depth testing to be enabled
+    //启动深度测试，openGL 只绘制前面的一层，绘制时检查当前像素前面是否有别的像素
+    //如果别的像素挡住了它，那它就不会绘制
     glEnable(GL_DEPTH_TEST);
 
     // Issue specific OpenGl we might need
+    //在opengl 中使用颜色混合
     glEnable (GL_BLEND);
+	//选择混合选项
     glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+	//新建按键和选择框，第一个参数为按键的名字，
+	//第二个为默认状态，第三个为是否有选择框
     pangolin::CreatePanel("menu").SetBounds(0.0,1.0,0.0,pangolin::Attach::Pix(175));
     pangolin::Var<bool> menuFollowCamera("menu.Follow Camera",true,true);
     pangolin::Var<bool> menuShowPoints("menu.Show Points",true,true);
@@ -74,12 +82,17 @@ void Viewer::Run()
     pangolin::Var<bool> menuReset("menu.Reset",false,false);
 
     // Define Camera Render Object (for view / scene browsing)
+    //定义显示面板大小，orbslam 中有左右两个面板，左边显示一些按钮，右边显示图形
+    //前两个参数(0.0 , 1.0) 表明宽度和面板纵向宽度和窗口大小相同
+    
     pangolin::OpenGlRenderState s_cam(
                 pangolin::ProjectionMatrix(1024,768,mViewpointF,mViewpointF,512,389,0.1,1000),
                 pangolin::ModelViewLookAt(mViewpointX,mViewpointY,mViewpointZ, 0,0,0,0.0,-1.0, 0.0)
                 );
 
     // Add named OpenGL viewport to window and provide 3D Handler
+    //中间两个参数(pangolin::Attach::Pix(175),1.0)表明右边所有部分用于显示图形
+    //最后一个参数(-1024.0f/768.0f)为显示长宽比
     pangolin::View& d_cam = pangolin::CreateDisplay()
             .SetBounds(0.0, 1.0, pangolin::Attach::Pix(175), 1.0, -1024.0f/768.0f)
             .SetHandler(new pangolin::Handler3D(s_cam));
@@ -94,12 +107,16 @@ void Viewer::Run()
 
     while(1)
     {
+    	//清除缓冲区中的当前可写的颜色缓冲 和深度缓冲
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+		//得到最新的相机位姿
         mpMapDrawer->GetCurrentOpenGLCameraMatrix(Twc);
 
+		//根据相机的位姿调整视角
         if(menuFollowCamera && bFollow)
         {
+        	//传入相机位姿
             s_cam.Follow(Twc);
         }
         else if(menuFollowCamera && !bFollow)
@@ -125,15 +142,22 @@ void Viewer::Run()
         }
 
         d_cam.Activate(s_cam);
+		//绘制地图和图像
+		//设置为白色，glClearColor(red, green, blue, alpha), 数值范围(0,1)
         glClearColor(1.0f,1.0f,1.0f,1.0f);
+		//绘制相机位姿
         mpMapDrawer->DrawCurrentCamera(Twc);
         if(menuShowKeyFrames || menuShowGraph)
+			//绘制关键帧的关键点
             mpMapDrawer->DrawKeyFrames(menuShowKeyFrames,menuShowGraph);
         if(menuShowPoints)
+			//绘制地图点
             mpMapDrawer->DrawMapPoints();
 
+		//pangolin 完成绘制
         pangolin::FinishFrame();
 
+		//使用opencv 显示当前帧
         cv::Mat im = mpFrameDrawer->DrawFrame();
         cv::imshow("ORB-SLAM2: Current Frame",im);
         cv::waitKey(mT);
