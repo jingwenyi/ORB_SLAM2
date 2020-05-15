@@ -325,6 +325,7 @@ void Tracking::Track()
             {
                 // Local Mapping might have changed some MapPoints tracked in last frame
                 //检查并更新上一帧被替换的MapPpints
+                //该地图点是否被替代是在回环检测中实现的
                 CheckReplacedInLastFrame();
 
 				//跟踪上一帧或者参考帧或者重定位
@@ -570,54 +571,90 @@ void Tracking::Track()
 }
 
 
+//双目和rgbd 的初始化
+//双目和rgbd 的地图初始化，由于stereo 有深度图，可以当帧初始化
 void Tracking::StereoInitialization()
 {
+	//当前帧的关键点大于500个
     if(mCurrentFrame.N>500)
     {
         // Set Frame pose to the origin
+        //设定初始化位姿
         mCurrentFrame.SetPose(cv::Mat::eye(4,4,CV_32F));
 
         // Create KeyFrame
+        //将当前帧构造为初始关键帧
+        //mCurrentFrame 的数据类型为Frame
+        //KeyFrame 包含Frame 、地图3D 点、以及bow
+        //KeyFrame里有一个mpMap, Tracking 里有一个mpMap, 而KeyFrame 里的mpMap 都指向Tracking 里的这个mpMap
+        //KeyFrame里有一个mpKeyFrameDB, Tracking 里有一个mpKeyFrameDB, 
+        // 而keyFrame 里的mpMap 都指向Tracking 里的这个mpKeyFrameDB
         KeyFrame* pKFini = new KeyFrame(mCurrentFrame,mpMap,mpKeyFrameDB);
 
+		//计算视觉词袋
+		pKFini->ComputeBoW()
+
         // Insert KeyFrame in the map
+        //keyFrame 中包含了地图、反过来地图中也包含了KeyFrame, 相互包含
+        //地图中添加该初始关键帧
         mpMap->AddKeyFrame(pKFini);
 
         // Create MapPoints and asscoiate to KeyFrame
+        //通过双目或rgbd 的深度为每一个特征点构造地图点
+        //遍历所有的特征点
         for(int i=0; i<mCurrentFrame.N;i++)
         {
+        	//获取该特征点的深度
             float z = mCurrentFrame.mvDepth[i];
+			//深度必须大于0
             if(z>0)
             {
+            	//通过反投影得到该特征点的3D 坐标
                 cv::Mat x3D = mCurrentFrame.UnprojectStereo(i);
+				//将3d 点构造成地图点
                 MapPoint* pNewMP = new MapPoint(x3D,pKFini,mpMap);
+				//为地图点添加观测帧和对于的特征点
                 pNewMP->AddObservation(pKFini,i);
+				//为关键帧添加地图点和对于的特征点
                 pKFini->AddMapPoint(pNewMP,i);
+				//计算地图点最佳描述子
                 pNewMP->ComputeDistinctiveDescriptors();
+				//更新该地图点平均观测方向以及观测距离范围
                 pNewMP->UpdateNormalAndDepth();
+				//在地图中添加地图点
                 mpMap->AddMapPoint(pNewMP);
-
+				//为当前帧的特征点与地图点之间建立索引
                 mCurrentFrame.mvpMapPoints[i]=pNewMP;
             }
         }
 
         cout << "New map created with " << mpMap->MapPointsInMap() << " points" << endl;
 
+		//在局部地图中添加该初始化关键帧，局部地图要处理该关键帧
         mpLocalMapper->InsertKeyFrame(pKFini);
 
+		//更新最新帧
         mLastFrame = Frame(mCurrentFrame);
         mnLastKeyFrameId=mCurrentFrame.mnId;
         mpLastKeyFrame = pKFini;
 
+		//把当前帧插入到局部地图关键帧中
         mvpLocalKeyFrames.push_back(pKFini);
+		//局部地图地图点
         mvpLocalMapPoints=mpMap->GetAllMapPoints();
+		//该关键帧的参考关键帧
         mpReferenceKF = pKFini;
+		//当前帧的参考帧为该关键帧
         mCurrentFrame.mpReferenceKF = pKFini;
 
+		//把当前最新的局部地图点作为SetReferenceMapPoints
+		//SetReferenceMapPoints 是DrawMapPoints 函数画图的时候用的
         mpMap->SetReferenceMapPoints(mvpLocalMapPoints);
 
+		//设置该关键帧位地图的原始关键帧
         mpMap->mvpKeyFrameOrigins.push_back(pKFini);
 
+		//画图使用位姿
         mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
 
         mState=OK;
@@ -865,10 +902,11 @@ void Tracking::CheckReplacedInLastFrame()
 
         if(pMP)
         {
+        	//该地图点是否需要别替代
             MapPoint* pRep = pMP->GetReplaced();
             if(pRep)
             {
-            	//设置关键帧的地图点
+            	//替代该地图点
                 mLastFrame.mvpMapPoints[i] = pRep;
             }
         }
@@ -1467,10 +1505,11 @@ void Tracking::UpdateLocalMap()
     //Viewer 对象显示
     mpMap->SetReferenceMapPoints(mvpLocalMapPoints);
 
+	//每来一个当前帧，会把之前的局部关键帧和局部地图点删掉
     // Update
     //更新本地关键帧
     UpdateLocalKeyFrames();
-	//跟踪本地地图点
+	// 更新本地地图点
     UpdateLocalPoints();
 }
 

@@ -347,7 +347,7 @@ void KeyFrame::UpdateConnections()
         	//除去自身，自己跟自己不算共视
             if(mit->first->mnId==mnId)
                 continue;
-			//统计每一个关键整关联的地图点个数
+			//统计每一个关键帧 关联的地图点个数
             KFcounter[mit->first]++;
         }
     }

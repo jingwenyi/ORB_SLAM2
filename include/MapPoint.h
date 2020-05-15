@@ -146,6 +146,7 @@ protected:
      // Bad flag (we do not currently erase MapPoint from memory)
      //地图点是否可用
      bool mbBad;
+	 //替代该地图的地图点
      MapPoint* mpReplaced;
 
      // Scale invariance distances

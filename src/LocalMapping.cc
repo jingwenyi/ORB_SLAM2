@@ -174,6 +174,9 @@ void LocalMapping::ProcessNewKeyFrame()
             	//在该地图点的观测帧向量中找不到当前帧
                 if(!pMP->IsInKeyFrame(mpCurrentKeyFrame))
                 {
+                	//
+                	//  将关键帧插入到地图
+                	//
                 	//为地图点添加关键帧
                     pMP->AddObservation(mpCurrentKeyFrame, i);
 					//更新地图点平均观测方向和观测距离的范围

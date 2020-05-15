@@ -152,6 +152,7 @@ protected:
     bool mbVO;
 
     //Other Thread Pointers
+    //局部地图
     //局部 建图线程指针
     LocalMapping* mpLocalMapper;
 	//回环检测线程指针
@@ -172,8 +173,10 @@ protected:
     //参考关键帧
     KeyFrame* mpReferenceKF;
 	//局部地图关键帧
+	//每来一个新的当前帧，都要清空局部关键帧
     std::vector<KeyFrame*> mvpLocalKeyFrames;
-	//局部地图关键点
+	//局部地图地图点
+	//每来一个新的当前帧，都要清空局部地图点
     std::vector<MapPoint*> mvpLocalMapPoints;
     
     // System
@@ -185,6 +188,7 @@ protected:
     MapDrawer* mpMapDrawer;
 
     //Map
+    //全局地图
     Map* mpMap;
 
     //Calibration matrix
@@ -219,6 +223,7 @@ protected:
     //Color order (true RGB, false BGR, ignored if grayscale)
     bool mbRGB;
 
+	//零时地图点
     list<MapPoint*> mlpTemporalPoints;
 };
 
